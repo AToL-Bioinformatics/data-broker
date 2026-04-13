@@ -1,1 +1,13 @@
+# Environment variables
 .env
+
+
+
+*__pycache__*
+
+.venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+coverage.xml

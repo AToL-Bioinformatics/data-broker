@@ -144,26 +144,38 @@ class Orchestrator:
         submission_mode: SubmissionMode,
         hold_until_date: str | None,
     ) -> AttemptState:
-        """Translate a ClaimResponse into an AttemptState."""
-        attempt_id = claim.attempt_id
+        """Translate a ClaimResponse into an AttemptState.
+
+        Canopy groups entities by type (projects, samples, experiments, reads).
+        Prerequisite accessions are nested under each entity's relationships field.
+        """
         attempt = AttemptState(
-            attempt_id=attempt_id,
+            attempt_id=claim.attempt_id,
             tax_id=tax_id,
             mode=mode,
             submission_mode=submission_mode,
             status=AttemptStatus.IN_PROGRESS,
             hold_until_date=hold_until_date,
         )
-        for payload in claim.entities:
-            entity = EntitySubmissionState(
-                entity_id=payload.entity_id,
-                entity_type=payload.entity_type,
-                raw_payload=payload.data,
-                project_accession=payload.project_accession,
-                sample_accession=payload.sample_accession,
-                experiment_accession=payload.experiment_accession,
-            )
-            attempt.entities[payload.entity_type].append(entity)
+        # (entity_type, canopy_list) pairs in dependency order
+        grouped = [
+            (EntityType.PROJECT, claim.projects),
+            (EntityType.SAMPLE, claim.samples),
+            (EntityType.EXPERIMENT, claim.experiments),
+            (EntityType.RUN, claim.reads),  # Canopy calls runs "reads"
+        ]
+        for entity_type, canopy_entities in grouped:
+            for ce in canopy_entities:
+                rels = ce.relationships
+                entity = EntitySubmissionState(
+                    entity_id=ce.id,
+                    entity_type=entity_type,
+                    raw_payload=ce.prepared_payload,
+                    project_accession=rels.project_accession if rels else None,
+                    sample_accession=rels.sample_accession if rels else None,
+                    experiment_accession=rels.experiment_accession if rels else None,
+                )
+                attempt.entities[entity_type].append(entity)
         return attempt
 
     def _run_entities(

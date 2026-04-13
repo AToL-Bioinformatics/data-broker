@@ -1,19 +1,4 @@
-"""Models for Canopy API request and response payloads.
-
-ASSUMPTION: Canopy API paths and shapes are inferred from the spec.
-They are isolated here and in clients/canopy.py so they can be updated
-without touching any other layer.
-
-Claim endpoints:
-  POST /claim                    bulk claim by tax_id
-  POST /claim/entity             targeted claim by type + id
-
-Validate endpoint:
-  GET  /validate/{type}/{id}
-
-Report endpoint:
-  POST /report
-"""
+"""Models for Canopy API request and response payloads."""
 
 from __future__ import annotations
 
@@ -24,44 +9,92 @@ from pydantic import BaseModel, Field
 from broker.enums import EntityType
 
 
-class CanopyEntityPayload(BaseModel):
-    """A single entity record returned by Canopy's claim response.
+class CanopyEntityRelationships(BaseModel):
+    """Prerequisite accessions Canopy already knows for an entity.
 
-    Prerequisite accession fields (project_accession, sample_accession,
-    experiment_accession) are OPTIONAL. Canopy may or may not include them.
-    Their absence must produce a clear validation error — not a silent assumption.
+    Fields present depend on entity type:
+      experiments: project_accession, sample_accession (+ IDs)
+      reads:       experiment_accession (+ IDs)
+      projects:    organism_key, project_type
+      samples:     typically absent (null)
+    """
+
+    # Experiment prerequisites
+    sample_id: str | None = None
+    sample_submission_id: str | None = None
+    sample_accession: str | None = None
+    project_accession: str | None = None
+
+    # Read prerequisites
+    experiment_id: str | None = None
+    experiment_submission_id: str | None = None
+    experiment_accession: str | None = None
+
+    # Project metadata
+    organism_key: str | None = None
+    project_type: str | None = None
+
+
+class CanopyEntity(BaseModel):
+    """A single entity record returned inside a ClaimResponse."""
+
+    id: str
+    submission_id: str | None = None
+    status: str | None = None
+    prepared_payload: dict[str, Any]
+    accession: str | None = None
+    relationships: CanopyEntityRelationships | None = None
+
+
+class CanopyOrganism(BaseModel):
+    organism_key: str
+    scientific_name: str | None = None
+    tax_id: int | None = None
+    culture_or_strain_id: str | None = None
+
+
+class ClaimResponse(BaseModel):
+    """Response from POST /broker/organisms/taxid{tax_id}/claim.
+
+    Entities are grouped by type. The 'reads' key maps to EntityType.RUN.
+    """
+
+    attempt_id: str
+    organism_key: str | None = None
+    organism: CanopyOrganism | None = None
+    projects: list[CanopyEntity] = Field(default_factory=list)
+    samples: list[CanopyEntity] = Field(default_factory=list)
+    experiments: list[CanopyEntity] = Field(default_factory=list)
+    reads: list[CanopyEntity] = Field(default_factory=list)
+
+
+class CanopyEntityPayload(BaseModel):
+    """Internal DTO used by TransformService and SubmissionService.
+
+    Holds the fields needed to build ENA XML from a claimed entity.
+    Constructed from EntitySubmissionState (which stores raw_payload from CanopyEntity).
     """
 
     entity_id: str
     entity_type: EntityType
-    data: dict[str, Any]  # full entity data used by TransformService
-
-    # Prerequisites Canopy already knows — may be absent, always check.
+    data: dict[str, Any]
     project_accession: str | None = None
     sample_accession: str | None = None
     experiment_accession: str | None = None
 
 
-class ClaimResponse(BaseModel):
-    """Response from POST /claim or POST /claim/entity."""
-
-    attempt_id: str
-    entities: list[CanopyEntityPayload] = Field(default_factory=list)
-
-
 class ValidationResponse(BaseModel):
-    """Response from GET /validate/{entity_type}/{entity_id}."""
+    """Response from GET /broker/validate/{entity_type}/{entity_id}."""
 
     entity_id: str
     entity_type: EntityType
     valid: bool
     errors: list[str] = Field(default_factory=list)
-    # Prerequisites Canopy resolved server-side (may be empty)
     prerequisites: dict[str, str] = Field(default_factory=dict)
 
 
 class ReportPayload(BaseModel):
-    """Payload sent to Canopy after each entity submission outcome (POST /report)."""
+    """Payload sent to Canopy after each entity submission outcome."""
 
     attempt_id: str
     entity_id: str
@@ -69,6 +102,6 @@ class ReportPayload(BaseModel):
     status: str  # "succeeded" | "failed"
     accession: str | None = None
     biosample_accession: str | None = None
-    raw_receipt: str | None = None  # raw ENA response body, verbatim
+    raw_receipt: str | None = None
     submission_timestamp: str | None = None  # ISO 8601
     error_message: str | None = None

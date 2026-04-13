@@ -100,10 +100,10 @@ class CanopyClient:
 
         entity_types: if provided, request only those types; None means all.
         """
-        body: dict[str, Any] = {"tax_id": tax_id}
+        body: dict[str, Any] = {"lease_duration_minutes": 5}
         if entity_types is not None:
             body["entity_types"] = [str(et) for et in entity_types]
-        resp = self._post("/broker/organisms/taxid{tax_id}/claim", json=body)
+        resp = self._post(f"/broker/organisms/taxid{tax_id}/claim", json=body)
         return ClaimResponse.model_validate(resp.json())
 
     def claim_entity(self, entity_type: EntityType, entity_id: str) -> ClaimResponse:
@@ -122,13 +122,16 @@ class CanopyClient:
         return ValidationResponse.model_validate(resp.json())
 
     def report_outcome(self, payload: ReportPayload) -> None:
-        """POST /report — fire-and-forget; logs warning on failure.
+        """POST /broker/attempts/{attempt_id}/report — fire-and-forget; logs warning on failure.
 
         Submission outcome is already persisted locally, so Canopy
         reporting failure is non-fatal.
         """
         try:
-            self._post("/report", json=payload.model_dump())
+            self._post(
+                f"/broker/attempts/{payload.attempt_id}/report",
+                json=payload.model_dump(),
+            )
         except (CanopyError, httpx.TransportError) as exc:
             logger.warning(
                 "Failed to report outcome to Canopy for entity %s (%s): %s",

@@ -40,16 +40,26 @@ REFRESH_RESPONSE = {
 
 CLAIM_RESPONSE = {
     "attempt_id": "atm-123",
-    "entities": [
+    "organism_key": "taxid9606",
+    "organism": {
+        "organism_key": "taxid9606",
+        "scientific_name": "Homo sapiens",
+        "tax_id": 9606,
+        "culture_or_strain_id": None,
+    },
+    "projects": [
         {
-            "entity_id": "p1",
-            "entity_type": "project",
-            "data": {"title": "Test", "description": "Desc"},
-            "project_accession": None,
-            "sample_accession": None,
-            "experiment_accession": None,
+            "id": "p1",
+            "submission_id": "sub-p1",
+            "status": "submitting",
+            "prepared_payload": {"title": "Test", "description": "Desc"},
+            "accession": None,
+            "relationships": {"organism_key": "taxid9606", "project_type": "genomic_data"},
         }
     ],
+    "samples": [],
+    "experiments": [],
+    "reads": [],
 }
 
 VALIDATION_RESPONSE = {
@@ -81,7 +91,7 @@ def add_login_mock(httpx_mock) -> None:
 def test_login_called_on_first_request(httpx_mock):
     add_login_mock(httpx_mock)
     httpx_mock.add_response(
-        method="POST", url="http://canopy.test/claim", json=CLAIM_RESPONSE
+        method="POST", url="http://canopy.test/broker/organisms/taxid9606/claim", json=CLAIM_RESPONSE
     )
     client = CanopyClient(make_settings())
     client.claim_by_tax_id("9606")
@@ -92,7 +102,7 @@ def test_login_called_on_first_request(httpx_mock):
 def test_login_uses_username_password(httpx_mock):
     add_login_mock(httpx_mock)
     httpx_mock.add_response(
-        method="POST", url="http://canopy.test/claim", json=CLAIM_RESPONSE
+        method="POST", url="http://canopy.test/broker/organisms/taxid9606/claim", json=CLAIM_RESPONSE
     )
     client = CanopyClient(make_settings())
     client.claim_by_tax_id("9606")
@@ -108,10 +118,10 @@ def test_login_uses_username_password(httpx_mock):
 def test_login_not_repeated_on_subsequent_requests(httpx_mock):
     add_login_mock(httpx_mock)
     httpx_mock.add_response(
-        method="POST", url="http://canopy.test/claim", json=CLAIM_RESPONSE
+        method="POST", url="http://canopy.test/broker/organisms/taxid9606/claim", json=CLAIM_RESPONSE
     )
     httpx_mock.add_response(
-        method="POST", url="http://canopy.test/claim", json=CLAIM_RESPONSE
+        method="POST", url="http://canopy.test/broker/organisms/taxid10090/claim", json=CLAIM_RESPONSE
     )
     client = CanopyClient(make_settings())
     client.claim_by_tax_id("9606")
@@ -143,7 +153,7 @@ def test_401_triggers_token_refresh(httpx_mock):
     add_login_mock(httpx_mock)
     # First /claim returns 401 (token expired)
     httpx_mock.add_response(
-        method="POST", url="http://canopy.test/claim", status_code=401
+        method="POST", url="http://canopy.test/broker/organisms/taxid9606/claim", status_code=401
     )
     # /refresh returns new tokens
     httpx_mock.add_response(
@@ -151,7 +161,7 @@ def test_401_triggers_token_refresh(httpx_mock):
     )
     # Retry /claim succeeds
     httpx_mock.add_response(
-        method="POST", url="http://canopy.test/claim", json=CLAIM_RESPONSE
+        method="POST", url="http://canopy.test/broker/organisms/taxid9606/claim", json=CLAIM_RESPONSE
     )
     client = CanopyClient(make_settings())
     result = client.claim_by_tax_id("9606")
@@ -168,7 +178,7 @@ def test_401_with_refresh_failure_falls_back_to_relogin(httpx_mock):
     add_login_mock(httpx_mock)
     # First /claim → 401
     httpx_mock.add_response(
-        method="POST", url="http://canopy.test/claim", status_code=401
+        method="POST", url="http://canopy.test/broker/organisms/taxid9606/claim", status_code=401
     )
     # /refresh → 401 (refresh token also expired)
     httpx_mock.add_response(
@@ -180,7 +190,7 @@ def test_401_with_refresh_failure_falls_back_to_relogin(httpx_mock):
     )
     # Retry /claim succeeds
     httpx_mock.add_response(
-        method="POST", url="http://canopy.test/claim", json=CLAIM_RESPONSE
+        method="POST", url="http://canopy.test/broker/organisms/taxid9606/claim", json=CLAIM_RESPONSE
     )
     client = CanopyClient(make_settings())
     result = client.claim_by_tax_id("9606")
@@ -192,7 +202,7 @@ def test_401_with_refresh_failure_falls_back_to_relogin(httpx_mock):
 def test_access_token_sent_as_bearer(httpx_mock):
     add_login_mock(httpx_mock)
     httpx_mock.add_response(
-        method="POST", url="http://canopy.test/claim", json=CLAIM_RESPONSE
+        method="POST", url="http://canopy.test/broker/organisms/taxid9606/claim", json=CLAIM_RESPONSE
     )
     client = CanopyClient(make_settings())
     client.claim_by_tax_id("9606")
@@ -208,19 +218,23 @@ def test_access_token_sent_as_bearer(httpx_mock):
 def test_claim_by_tax_id_success(httpx_mock):
     add_login_mock(httpx_mock)
     httpx_mock.add_response(
-        method="POST", url="http://canopy.test/claim", json=CLAIM_RESPONSE
+        method="POST",
+        url="http://canopy.test/broker/organisms/taxid9606/claim",
+        json=CLAIM_RESPONSE,
     )
     client = CanopyClient(make_settings())
     result = client.claim_by_tax_id("9606")
     assert isinstance(result, ClaimResponse)
     assert result.attempt_id == "atm-123"
-    assert result.entities[0].entity_id == "p1"
+    assert result.projects[0].id == "p1"
 
 
 def test_claim_by_tax_id_with_entity_type_filter(httpx_mock):
     add_login_mock(httpx_mock)
     httpx_mock.add_response(
-        method="POST", url="http://canopy.test/claim", json=CLAIM_RESPONSE
+        method="POST",
+        url="http://canopy.test/broker/organisms/taxid9606/claim",
+        json=CLAIM_RESPONSE,
     )
     client = CanopyClient(make_settings())
     client.claim_by_tax_id("9606", entity_types=[EntityType.PROJECT])
@@ -228,6 +242,20 @@ def test_claim_by_tax_id_with_entity_type_filter(httpx_mock):
     body = json.loads(claim_req.content)
     assert "entity_types" in body
     assert "project" in body["entity_types"]
+
+
+def test_claim_by_tax_id_url_contains_tax_id(httpx_mock):
+    """tax_id must be interpolated into the URL, not sent as a literal string."""
+    add_login_mock(httpx_mock)
+    httpx_mock.add_response(
+        method="POST",
+        url="http://canopy.test/broker/organisms/taxid10090/claim",
+        json=CLAIM_RESPONSE,
+    )
+    client = CanopyClient(make_settings())
+    client.claim_by_tax_id("10090")
+    claim_req = httpx_mock.get_requests()[1]
+    assert "taxid10090" in str(claim_req.url)
 
 
 def test_claim_entity_success(httpx_mock):
@@ -243,7 +271,10 @@ def test_claim_entity_success(httpx_mock):
 def test_canopy_4xx_raises_canopy_error(httpx_mock):
     add_login_mock(httpx_mock)
     httpx_mock.add_response(
-        method="POST", url="http://canopy.test/claim", text="Not found", status_code=404
+        method="POST",
+        url="http://canopy.test/broker/organisms/taxid9606/claim",
+        text="Not found",
+        status_code=404,
     )
     client = CanopyClient(make_settings())
     with pytest.raises(CanopyError) as exc_info:
@@ -254,7 +285,10 @@ def test_canopy_4xx_raises_canopy_error(httpx_mock):
 def test_canopy_5xx_raises_canopy_error(httpx_mock):
     add_login_mock(httpx_mock)
     httpx_mock.add_response(
-        method="POST", url="http://canopy.test/claim", text="Internal error", status_code=500
+        method="POST",
+        url="http://canopy.test/broker/organisms/taxid9606/claim",
+        text="Internal error",
+        status_code=500,
     )
     client = CanopyClient(make_settings())
     with pytest.raises(CanopyError) as exc_info:
@@ -266,7 +300,7 @@ def test_validate_entity(httpx_mock):
     add_login_mock(httpx_mock)
     httpx_mock.add_response(
         method="GET",
-        url="http://canopy.test/validate/project/p1",
+        url="http://canopy.test/broker/validate/project/p1",
         json=VALIDATION_RESPONSE,
     )
     client = CanopyClient(make_settings())
@@ -278,7 +312,9 @@ def test_validate_entity(httpx_mock):
 def test_report_outcome_success(httpx_mock):
     add_login_mock(httpx_mock)
     httpx_mock.add_response(
-        method="POST", url="http://canopy.test/report", json=REPORT_RESPONSE
+        method="POST",
+        url="http://canopy.test/broker/attempts/atm-1/report",
+        json=REPORT_RESPONSE,
     )
     client = CanopyClient(make_settings())
     payload = ReportPayload(
@@ -291,12 +327,32 @@ def test_report_outcome_success(httpx_mock):
     client.report_outcome(payload)
 
 
+def test_report_outcome_attempt_id_in_url(httpx_mock):
+    """attempt_id must appear in the report URL path."""
+    add_login_mock(httpx_mock)
+    httpx_mock.add_response(
+        method="POST",
+        url="http://canopy.test/broker/attempts/atm-xyz/report",
+        json=REPORT_RESPONSE,
+    )
+    client = CanopyClient(make_settings())
+    payload = ReportPayload(
+        attempt_id="atm-xyz",
+        entity_id="p1",
+        entity_type=EntityType.PROJECT,
+        status="succeeded",
+    )
+    client.report_outcome(payload)
+    report_req = [r for r in httpx_mock.get_requests() if "report" in str(r.url)][0]
+    assert "atm-xyz" in str(report_req.url)
+
+
 def test_report_outcome_failure_does_not_raise(httpx_mock):
     """report_outcome logs a warning on failure but never raises."""
     add_login_mock(httpx_mock)
     httpx_mock.add_response(
         method="POST",
-        url="http://canopy.test/report",
+        url="http://canopy.test/broker/attempts/atm-1/report",
         text="Service unavailable",
         status_code=503,
     )

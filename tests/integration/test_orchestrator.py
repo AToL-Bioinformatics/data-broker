@@ -22,7 +22,7 @@ from broker.enums import (
 )
 from broker.errors import AttemptNotFoundError, PrerequisiteMissingError
 from broker.models.attempt import AttemptState, EntitySubmissionState
-from broker.models.canopy import CanopyEntityPayload, ClaimResponse
+from broker.models.canopy import CanopyEntity, ClaimResponse
 from broker.services.orchestrator import Orchestrator
 from broker.services.resume_service import ResumeService
 
@@ -32,18 +32,33 @@ from broker.services.resume_service import ResumeService
 # ---------------------------------------------------------------------------
 
 
-def make_entity_payload(entity_type: EntityType, entity_id: str) -> CanopyEntityPayload:
-    return CanopyEntityPayload(
-        entity_id=entity_id,
-        entity_type=entity_type,
-        data={"title": f"T-{entity_id}", "description": "D"},
+def make_entity(entity_id: str) -> CanopyEntity:
+    return CanopyEntity(
+        id=entity_id,
+        prepared_payload={"title": f"T-{entity_id}", "description": "D"},
     )
 
 
+def make_entity_payload(entity_type: EntityType, entity_id: str) -> tuple[EntityType, CanopyEntity]:
+    """Return (entity_type, CanopyEntity) for use with make_claim."""
+    return entity_type, make_entity(entity_id)
+
+
 def make_claim(
-    attempt_id: str, entities: list[CanopyEntityPayload]
+    attempt_id: str, entities: list[tuple[EntityType, CanopyEntity]]
 ) -> ClaimResponse:
-    return ClaimResponse(attempt_id=attempt_id, entities=entities)
+    """Build a ClaimResponse from a list of (entity_type, CanopyEntity) pairs."""
+    projects = [e for et, e in entities if et == EntityType.PROJECT]
+    samples = [e for et, e in entities if et == EntityType.SAMPLE]
+    experiments = [e for et, e in entities if et == EntityType.EXPERIMENT]
+    reads = [e for et, e in entities if et == EntityType.RUN]
+    return ClaimResponse(
+        attempt_id=attempt_id,
+        projects=projects,
+        samples=samples,
+        experiments=experiments,
+        reads=reads,
+    )
 
 
 def make_mock_submission_service(side_effect=None):
