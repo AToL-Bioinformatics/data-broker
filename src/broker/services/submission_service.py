@@ -115,7 +115,7 @@ class SubmissionService:
         result = self._dispatch_to_ena(entity, submission_xml, entity_xml)
 
         # Step 5: Persist raw receipt verbatim
-        self._receipt_store.save(
+        receipt_path = self._receipt_store.save(
             attempt_id=attempt_state.attempt_id,
             entity_type=entity.entity_type,
             entity_id=entity.entity_id,
@@ -151,6 +151,8 @@ class SubmissionService:
             attempt_id=attempt_state.attempt_id,
             entity=entity,
             raw_receipt=result.raw_receipt or None,
+            receipt_path=receipt_path,
+            tax_id=attempt_state.tax_id,
         )
 
         return entity

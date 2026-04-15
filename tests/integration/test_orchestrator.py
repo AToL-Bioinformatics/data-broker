@@ -22,7 +22,7 @@ from broker.enums import (
 )
 from broker.errors import AttemptNotFoundError, PrerequisiteMissingError
 from broker.models.attempt import AttemptState, EntitySubmissionState
-from broker.models.canopy import CanopyEntity, ClaimResponse
+from broker.models.canopy import CanopyEntity, CanopyEntityPrerequisites, ClaimResponse
 from broker.services.orchestrator import Orchestrator
 from broker.services.resume_service import ResumeService
 
@@ -32,32 +32,26 @@ from broker.services.resume_service import ResumeService
 # ---------------------------------------------------------------------------
 
 
-def make_entity(entity_id: str) -> CanopyEntity:
+def make_entity(entity_type: EntityType, entity_id: str) -> CanopyEntity:
     return CanopyEntity(
+        type=entity_type,
         id=entity_id,
-        prepared_payload={"title": f"T-{entity_id}", "description": "D"},
+        payload={"title": f"T-{entity_id}", "description": "D"},
     )
 
 
 def make_entity_payload(entity_type: EntityType, entity_id: str) -> tuple[EntityType, CanopyEntity]:
-    """Return (entity_type, CanopyEntity) for use with make_claim."""
-    return entity_type, make_entity(entity_id)
+    """Kept for backward compatibility with test call sites."""
+    return entity_type, make_entity(entity_type, entity_id)
 
 
 def make_claim(
     attempt_id: str, entities: list[tuple[EntityType, CanopyEntity]]
 ) -> ClaimResponse:
     """Build a ClaimResponse from a list of (entity_type, CanopyEntity) pairs."""
-    projects = [e for et, e in entities if et == EntityType.PROJECT]
-    samples = [e for et, e in entities if et == EntityType.SAMPLE]
-    experiments = [e for et, e in entities if et == EntityType.EXPERIMENT]
-    reads = [e for et, e in entities if et == EntityType.RUN]
     return ClaimResponse(
         attempt_id=attempt_id,
-        projects=projects,
-        samples=samples,
-        experiments=experiments,
-        reads=reads,
+        entities=[e for _, e in entities],
     )
 
 
@@ -307,6 +301,56 @@ def test_resume_submitted_state_is_retried(tmp_state_store):
 
     # Should have been re-submitted
     submission_svc.submit_entity.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Batch submission
+# ---------------------------------------------------------------------------
+
+
+def test_batch_calls_claim_batch(tmp_state_store):
+    """run_batch must call claim_batch with the provided entity IDs."""
+    claim = make_claim("atm-b1", [make_entity_payload(EntityType.SAMPLE, "s1")])
+    canopy = MagicMock()
+    canopy.claim_batch.return_value = claim
+    submission_svc = make_mock_submission_service()
+
+    orchestrator = make_orchestrator(canopy, submission_svc, tmp_state_store)
+    orchestrator.run_batch(sample_ids=["s1", "s2"])
+
+    canopy.claim_batch.assert_called_once_with(
+        project_ids=None,
+        sample_ids=["s1", "s2"],
+        experiment_ids=None,
+        run_ids=None,
+    )
+
+
+def test_batch_mode_stored_as_targeted(tmp_state_store):
+    """Batch attempts are stored with TARGETED mode — no silent state fallback."""
+    claim = make_claim("atm-b2", [make_entity_payload(EntityType.PROJECT, "p1")])
+    canopy = MagicMock()
+    canopy.claim_batch.return_value = claim
+    submission_svc = make_mock_submission_service()
+
+    orchestrator = make_orchestrator(canopy, submission_svc, tmp_state_store)
+    attempt = orchestrator.run_batch(project_ids=["p1"])
+
+    assert attempt.mode == AttemptMode.TARGETED
+
+
+def test_batch_disables_state_fallback(tmp_state_store):
+    """Batch mode passes allow_state_fallback=False to SubmissionService."""
+    claim = make_claim("atm-b3", [make_entity_payload(EntityType.SAMPLE, "s1")])
+    canopy = MagicMock()
+    canopy.claim_batch.return_value = claim
+    submission_svc = make_mock_submission_service()
+
+    orchestrator = make_orchestrator(canopy, submission_svc, tmp_state_store)
+    orchestrator.run_batch(sample_ids=["s1"])
+
+    call_kwargs = submission_svc.submit_entity.call_args
+    assert call_kwargs.kwargs.get("allow_state_fallback") is False
 
 
 def test_resume_final_status_written(tmp_state_store):

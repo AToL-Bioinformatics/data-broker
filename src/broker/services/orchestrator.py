@@ -79,6 +79,17 @@ class Orchestrator:
 
         logger.info("Claiming Canopy data for tax_id=%s, only=%s", tax_id, only)
         claim = self._canopy.claim_by_tax_id(tax_id, entity_types=entity_types)
+        if claim.attempt_id is None:
+            logger.info("No claimable entities for tax_id=%s — nothing to submit", tax_id)
+            # Return a completed empty attempt; no state file is created
+            return AttemptState(
+                attempt_id=self._state_store.generate_attempt_id(),
+                tax_id=tax_id,
+                mode=AttemptMode.BULK,
+                submission_mode=submission_mode,
+                status=AttemptStatus.COMPLETED,
+                hold_until_date=hold_until_date,
+            )
         attempt = self._build_attempt_state(
             claim=claim,
             tax_id=tax_id,
@@ -116,7 +127,7 @@ class Orchestrator:
             cli_overrides = {}
 
         logger.info("Claiming Canopy data for %s %s", entity_type, entity_id)
-        claim = self._canopy.claim_entity(entity_type, entity_id)
+        claim = self._canopy.claim_entity(entity_type=entity_type, entity_id=entity_id)
         attempt = self._build_attempt_state(
             claim=claim,
             tax_id=None,
@@ -126,6 +137,70 @@ class Orchestrator:
         )
         self._state_store.save(attempt)
 
+        self._run_entities(attempt, cli_overrides=cli_overrides, allow_state_fallback=False)
+
+        attempt.status = attempt.compute_status()
+        self._state_store.save(attempt)
+        return attempt
+
+    # ------------------------------------------------------------------
+    # Batch submission
+    # ------------------------------------------------------------------
+
+    def run_batch(
+        self,
+        project_ids: list[str] | None = None,
+        sample_ids: list[str] | None = None,
+        experiment_ids: list[str] | None = None,
+        run_ids: list[str] | None = None,
+        submission_mode: SubmissionMode = SubmissionMode.NORMAL,
+        cli_overrides: dict[str, str] | None = None,
+        hold_until_date: str | None = None,
+    ) -> AttemptState:
+        """Submit specific entities by ID via POST /claims/batch.
+
+        Prerequisites must come from cli_overrides or the Canopy payload.
+        State fallback is disabled — same behaviour as targeted mode.
+        """
+        if cli_overrides is None:
+            cli_overrides = {}
+
+        logger.info(
+            "Claiming batch: projects=%s samples=%s experiments=%s runs=%s",
+            project_ids, sample_ids, experiment_ids, run_ids,
+        )
+        claim = self._canopy.claim_batch(
+            project_ids=project_ids,
+            sample_ids=sample_ids,
+            experiment_ids=experiment_ids,
+            run_ids=run_ids,
+        )
+
+        if claim.attempt_id is None:
+            logger.info("Batch claim returned no entities — nothing to submit")
+            return AttemptState(
+                attempt_id=self._state_store.generate_attempt_id(),
+                tax_id=claim.tax_id,
+                mode=AttemptMode.TARGETED,
+                submission_mode=submission_mode,
+                status=AttemptStatus.COMPLETED,
+                hold_until_date=hold_until_date,
+            )
+
+        attempt = self._build_attempt_state(
+            claim=claim,
+            tax_id=None,
+            mode=AttemptMode.TARGETED,
+            submission_mode=submission_mode,
+            hold_until_date=hold_until_date,
+        )
+        self._state_store.save(attempt)
+        logger.info(
+            "Batch attempt %s created with %d entities",
+            attempt.attempt_id, len(attempt.all_entities_flat()),
+        )
+
+        # No state fallback — prerequisites must be explicit
         self._run_entities(attempt, cli_overrides=cli_overrides, allow_state_fallback=False)
 
         attempt.status = attempt.compute_status()
@@ -146,36 +221,32 @@ class Orchestrator:
     ) -> AttemptState:
         """Translate a ClaimResponse into an AttemptState.
 
-        Canopy groups entities by type (projects, samples, experiments, reads).
-        Prerequisite accessions are nested under each entity's relationships field.
+        Entities arrive as a flat list, each carrying its own `type` discriminator.
+        Prerequisite accessions come from the entity's `prerequisites` block:
+          - resolved values (project_accession etc.) are used directly
+          - required_* fields tell us what this entity depends on
         """
         attempt = AttemptState(
             attempt_id=claim.attempt_id,
-            tax_id=tax_id,
+            tax_id=tax_id or claim.tax_id,
             mode=mode,
             submission_mode=submission_mode,
             status=AttemptStatus.IN_PROGRESS,
             hold_until_date=hold_until_date,
         )
-        # (entity_type, canopy_list) pairs in dependency order
-        grouped = [
-            (EntityType.PROJECT, claim.projects),
-            (EntityType.SAMPLE, claim.samples),
-            (EntityType.EXPERIMENT, claim.experiments),
-            (EntityType.RUN, claim.reads),  # Canopy calls runs "reads"
-        ]
-        for entity_type, canopy_entities in grouped:
-            for ce in canopy_entities:
-                rels = ce.relationships
-                entity = EntitySubmissionState(
-                    entity_id=ce.id,
-                    entity_type=entity_type,
-                    raw_payload=ce.prepared_payload,
-                    project_accession=rels.project_accession if rels else None,
-                    sample_accession=rels.sample_accession if rels else None,
-                    experiment_accession=rels.experiment_accession if rels else None,
-                )
-                attempt.entities[entity_type].append(entity)
+        for ce in claim.entities:
+            prereqs = ce.prerequisites
+            entity = EntitySubmissionState(
+                entity_id=ce.id,
+                entity_type=ce.type,
+                raw_payload=ce.payload,
+                # Use already-resolved accessions from Canopy where available.
+                # The prerequisite_validator will verify required ones are present.
+                project_accession=prereqs.project_accession if prereqs else None,
+                sample_accession=prereqs.sample_accession if prereqs else None,
+                experiment_accession=prereqs.experiment_accession if prereqs else None,
+            )
+            attempt.entities[ce.type].append(entity)
         return attempt
 
     def _run_entities(

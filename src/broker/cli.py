@@ -1,9 +1,11 @@
 """ENA submission broker CLI.
 
 Commands:
-  broker submit ready --tax-id <id>         bulk submission by taxonomy ID
-  broker submit entity --type <t> --id <id> targeted single-entity submission
-  broker resume --attempt-id <id>           resume an interrupted attempt
+  broker submit ready  --tax-id <id>               bulk submission by taxonomy ID
+  broker submit entity --type <t> --id <id>         targeted single-entity submission
+  broker submit batch  --samples id1,id2 ...        submit specific entities by ID
+                       --from-file batch.json
+  broker resume        --attempt-id <id>            resume an interrupted attempt
 
 The CLI's responsibility is:
   1. Parse and validate arguments
@@ -18,9 +20,12 @@ and renders them as clear error messages with non-zero exit codes.
 
 from __future__ import annotations
 
+import json
 import logging
+import re
 import sys
-from typing import Annotated, Optional
+from pathlib import Path
+from typing import Annotated, List, Optional
 
 import typer
 from rich.console import Console
@@ -141,6 +146,120 @@ def submit_entity(
         attempt = orchestrator.run_targeted(
             entity_type=entity_type,
             entity_id=id_,
+            cli_overrides=cli_overrides,
+            submission_mode=submission_mode,
+            hold_until_date=hold_until,
+        )
+        _render_attempt(attempt)
+        if attempt.status.value in ("failed", "partial"):
+            raise typer.Exit(code=1)
+    except BrokerError as exc:
+        err_console.print(f"[ERROR] {exc}")
+        raise typer.Exit(code=1)
+
+
+# ---------------------------------------------------------------------------
+# broker submit batch
+# ---------------------------------------------------------------------------
+
+
+@submit_app.command("batch")
+def submit_batch(
+    projects: Annotated[
+        Optional[str],
+        typer.Option("--projects", help="Comma-separated project IDs, e.g. uuid1,uuid2"),
+    ] = None,
+    samples: Annotated[
+        Optional[str],
+        typer.Option("--samples", help="Comma-separated sample IDs"),
+    ] = None,
+    experiments: Annotated[
+        Optional[str],
+        typer.Option("--experiments", help="Comma-separated experiment IDs"),
+    ] = None,
+    runs: Annotated[
+        Optional[str],
+        typer.Option("--runs", help="Comma-separated run IDs"),
+    ] = None,
+    from_file: Annotated[
+        Optional[Path],
+        typer.Option(
+            "--from-file",
+            help=(
+                'JSON file with entity IDs, e.g. {"samples": ["id1","id2"], "experiments": ["id3"]}. '
+                "Merged with any inline --samples/--experiments/etc flags."
+            ),
+            exists=True,
+            file_okay=True,
+            dir_okay=False,
+        ),
+    ] = None,
+    project_accession: Annotated[Optional[str], typer.Option("--project-accession", help="Project accession (PRJEB*)")] = None,
+    sample_accession: Annotated[Optional[str], typer.Option("--sample-accession", help="Sample accession (ERS*)")] = None,
+    experiment_accession: Annotated[Optional[str], typer.Option("--experiment-accession", help="Experiment accession (ERX*)")] = None,
+    dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
+    hold_until: Annotated[
+        Optional[str],
+        typer.Option("--hold-until", help="ENA release date ISO 8601 (e.g. 2026-01-01). For projects and samples only."),
+    ] = None,
+) -> None:
+    """Submit specific entities by ID, across one or more entity types.
+
+    IDs can be supplied inline (comma-separated) or via a JSON file.
+
+    \b
+    Examples:
+      # Inline — comma-separated per type
+      broker submit batch --samples abc-123,def-456 --experiments xyz-789
+
+      # From a JSON file
+      broker submit batch --from-file batch.json
+
+      # Combined — file provides base, inline flags add more
+      broker submit batch --from-file batch.json --runs extra-run-id
+
+    \b
+    JSON file format:
+      {
+        "projects":    ["uuid", ...],
+        "samples":     ["uuid", ...],
+        "experiments": ["uuid", ...],
+        "runs":        ["uuid", ...]
+      }
+
+    Prerequisites must be supplied via flags or present in the Canopy payload.
+    The broker will not auto-submit dependencies.
+    """
+    from broker.errors import BrokerError
+
+    _validate_hold_until(hold_until)
+    submission_mode = _resolve_submission_mode(dry_run, False)
+    cli_overrides = _build_cli_overrides(project_accession, sample_accession, experiment_accession)
+
+    # Merge --from-file with inline flags
+    project_ids = _parse_id_csv(projects)
+    sample_ids = _parse_id_csv(samples)
+    experiment_ids = _parse_id_csv(experiments)
+    run_ids = _parse_id_csv(runs)
+
+    if from_file is not None:
+        file_ids = _load_batch_file(from_file)
+        project_ids = list({*project_ids, *file_ids.get("projects", [])})
+        sample_ids = list({*sample_ids, *file_ids.get("samples", [])})
+        experiment_ids = list({*experiment_ids, *file_ids.get("experiments", [])})
+        run_ids = list({*run_ids, *file_ids.get("runs", [])})
+
+    if not any([project_ids, sample_ids, experiment_ids, run_ids]):
+        err_console.print("[ERROR] No entity IDs provided. Use --samples, --experiments, etc. or --from-file.")
+        raise typer.Exit(code=1)
+
+    try:
+        orchestrator = _build_orchestrator(submission_mode=submission_mode)
+        attempt = orchestrator.run_batch(
+            project_ids=project_ids or None,
+            sample_ids=sample_ids or None,
+            experiment_ids=experiment_ids or None,
+            run_ids=run_ids or None,
             cli_overrides=cli_overrides,
             submission_mode=submission_mode,
             hold_until_date=hold_until,
@@ -373,10 +492,42 @@ def _build_cli_overrides(
 def _validate_hold_until(hold_until: str | None) -> None:
     if hold_until is None:
         return
-    import re
     if not re.match(r"^\d{4}-\d{2}-\d{2}$", hold_until):
         err_console.print(
             f"[ERROR] --hold-until '{hold_until}' is not a valid ISO 8601 date. "
             f"Use the format YYYY-MM-DD, e.g. 2026-01-01"
         )
         raise typer.Exit(code=1)
+
+
+def _parse_id_csv(value: str | None) -> list[str]:
+    """Parse a comma- or whitespace-separated string of IDs into a list.
+
+    Accepts:  "abc-123,def-456"  or  "abc-123 def-456"  or  "abc-123, def-456"
+    Returns:  ["abc-123", "def-456"]
+    """
+    if not value:
+        return []
+    return [v.strip() for v in re.split(r"[,\s]+", value) if v.strip()]
+
+
+def _load_batch_file(path: Path) -> dict[str, list[str]]:
+    """Load a batch JSON file and return a dict of entity_type → list[id].
+
+    Expected format:
+      {"projects": ["uuid1"], "samples": ["uuid2", "uuid3"], ...}
+    """
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        err_console.print(f"[ERROR] Could not read batch file '{path}': {exc}")
+        raise typer.Exit(code=1)
+    if not isinstance(data, dict):
+        err_console.print(f"[ERROR] Batch file must be a JSON object, got {type(data).__name__}")
+        raise typer.Exit(code=1)
+    valid_keys = {"projects", "samples", "experiments", "runs"}
+    unknown = set(data) - valid_keys
+    if unknown:
+        err_console.print(f"[ERROR] Unknown keys in batch file: {sorted(unknown)}. Valid keys: {sorted(valid_keys)}")
+        raise typer.Exit(code=1)
+    return {k: list(v) for k, v in data.items() if isinstance(v, list)}

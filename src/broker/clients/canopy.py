@@ -1,26 +1,23 @@
 """Canopy API client.
 
-ASSUMPTION: Canopy API paths and request/response shapes are inferred from
-the spec. All paths are isolated here so they can be updated without touching
-any other layer.
+Base path: /api/v1/broker  (CANOPY_BASE_URL env var; paths below are relative)
 
-Endpoints (base URL from CANOPY_BASE_URL env var):
-  POST /login              get access_token + refresh_token
-  POST /refresh            exchange refresh_token for new access_token
-                           ASSUMPTION: endpoint is /refresh, body {"refresh_token": "..."}
-                           Adjust if the actual path or body shape differs.
-  POST /claim              bulk claim by tax_id
-  POST /claim/entity       targeted claim by entity type + id
-  GET  /validate/{type}/{id}
-  POST /report
+Endpoints:
+  POST /auth/login               get access_token + refresh_token (form-encoded)
+  POST /auth/refresh             exchange refresh_token for new tokens
+  POST /broker/claims/ready      bulk claim by tax_id
+  POST /broker/claims/entity     targeted claim by entity type + id
+  POST /broker/claims/batch      claim multiple specific entities
+  POST /broker/validation        validate prerequisites
+  POST /broker/reports/{id}      report submission outcomes (attempt_id in path)
 
 Auth flow:
-  1. On first authenticated request: POST /login with CANOPY_USERNAME + CANOPY_PASSWORD.
-     Response: {"access_token": "...", "refresh_token": "..."}
+  1. On first authenticated request: POST /auth/login with form-encoded
+     username + password.  Response: {"access_token": "...", "refresh_token": "..."}
   2. Set Authorization: Bearer {access_token} on subsequent requests.
-  3. On 401: attempt POST /refresh with the stored refresh_token.
+  3. On 401: attempt POST /auth/refresh with the stored refresh_token.
      On refresh success: update tokens and retry the original request once.
-     On refresh failure (4xx): fall back to a full re-login and retry once.
+     On refresh failure (4xx): fall back to full re-login and retry once.
 
 Retry policy: exponential backoff on transient transport errors only (not 4xx).
 The 401 → refresh/re-login → single retry is separate from this transport retry.
@@ -42,7 +39,11 @@ from tenacity import (
 from broker.config import BrokerSettings
 from broker.enums import EntityType
 from broker.errors import CanopyError
-from broker.models.canopy import ClaimResponse, ReportPayload, ValidationResponse
+from broker.models.canopy import (
+    ClaimResponse,
+    ReportBatchPayload,
+    ValidationResponse,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -64,12 +65,9 @@ class CanopyClient:
     def __init__(self, settings: BrokerSettings) -> None:
         self._settings = settings
         self._base_url = str(settings.canopy_base_url).rstrip("/")
-        # No auth headers in the shared client — tokens are injected per-request
-        # so that token rotation after a refresh takes effect immediately.
-        # Content-Type is intentionally omitted from default headers:
+        # Content-Type is intentionally omitted from shared headers:
         # - JSON endpoints set it implicitly via httpx's json= kwarg
-        # - The login endpoint uses application/x-www-form-urlencoded (data= kwarg)
-        # Setting Content-Type here would override the per-request value.
+        # - Login uses application/x-www-form-urlencoded via data= kwarg
         self._client = httpx.Client(
             headers={"Accept": "application/json"},
             timeout=settings.http_timeout_seconds,
@@ -88,7 +86,7 @@ class CanopyClient:
         self.close()
 
     # ------------------------------------------------------------------
-    # Public API
+    # Public API — claim
     # ------------------------------------------------------------------
 
     def claim_by_tax_id(
@@ -96,47 +94,88 @@ class CanopyClient:
         tax_id: str,
         entity_types: list[EntityType] | None = None,
     ) -> ClaimResponse:
-        """POST /claim — bulk claim all ready entities for a tax_id.
+        """POST /broker/claims/ready — bulk claim all ready entities for a tax_id.
 
-        entity_types: if provided, request only those types; None means all.
+        entity_types: optional filter for partial scope (--only flag).
+        NOTE: the contract spec does not include entity_types in this endpoint
+        today; the server ignores unknown fields until it is added. Tracking
+        issue: add optional entity_types filter to /claims/ready.
         """
-        body: dict[str, Any] = {"lease_duration_minutes": 5}
+        body: dict[str, Any] = {"tax_id": tax_id}
         if entity_types is not None:
             body["entity_types"] = [str(et) for et in entity_types]
-        resp = self._post(f"/broker/organisms/taxid{tax_id}/claim", json=body)
+        resp = self._post("/broker/claims/ready", json=body)
         return ClaimResponse.model_validate(resp.json())
 
     def claim_entity(self, entity_type: EntityType, entity_id: str) -> ClaimResponse:
-        """POST /claim/entity — targeted claim for a single entity."""
+        """POST /broker/claims/entity — targeted claim for a single entity."""
         resp = self._post(
-            "/claim/entity",
+            "/broker/claims/entity",
             json={"entity_type": str(entity_type), "entity_id": entity_id},
         )
         return ClaimResponse.model_validate(resp.json())
 
+    def claim_batch(
+        self,
+        project_ids: list[str] | None = None,
+        sample_ids: list[str] | None = None,
+        experiment_ids: list[str] | None = None,
+        run_ids: list[str] | None = None,
+    ) -> ClaimResponse:
+        """POST /broker/claims/batch — claim multiple specific entities by ID."""
+        body: dict[str, list[str]] = {}
+        if project_ids:
+            body["project_ids"] = project_ids
+        if sample_ids:
+            body["sample_ids"] = sample_ids
+        if experiment_ids:
+            body["experiment_ids"] = experiment_ids
+        if run_ids:
+            body["run_ids"] = run_ids
+        resp = self._post("/broker/claims/batch", json=body)
+        return ClaimResponse.model_validate(resp.json())
+
+    # ------------------------------------------------------------------
+    # Public API — validation
+    # ------------------------------------------------------------------
+
     def validate_entity(
-        self, entity_type: EntityType, entity_id: str
+        self,
+        entity_type: EntityType,
+        entity_id: str,
+        overrides: dict[str, str | None] | None = None,
     ) -> ValidationResponse:
-        """GET /validate/{entity_type}/{entity_id}."""
-        resp = self._get(f"/broker/validate/{entity_type}/{entity_id}")
+        """POST /broker/validation — validate prerequisite accessions for an entity."""
+        body: dict[str, Any] = {
+            "entity_type": str(entity_type),
+            "entity_id": entity_id,
+        }
+        if overrides is not None:
+            body["overrides"] = overrides
+        resp = self._post("/broker/validation", json=body)
         return ValidationResponse.model_validate(resp.json())
 
-    def report_outcome(self, payload: ReportPayload) -> None:
-        """POST /broker/attempts/{attempt_id}/report — fire-and-forget; logs warning on failure.
+    # ------------------------------------------------------------------
+    # Public API — reporting
+    # ------------------------------------------------------------------
 
-        Submission outcome is already persisted locally, so Canopy
-        reporting failure is non-fatal.
+    def report_outcome(self, attempt_id: str, payload: ReportBatchPayload) -> None:
+        """POST /broker/reports/{attempt_id} — fire-and-forget outcome reporting.
+
+        attempt_id is in the URL path; payload body has tax_id + results list.
+        Failure is logged as a warning and not re-raised — the submission outcome
+        is already persisted locally, so a reporting failure can be retried later.
         """
         try:
             self._post(
-                f"/broker/attempts/{payload.attempt_id}/report",
+                f"/broker/reports/{attempt_id}",
                 json=payload.model_dump(),
             )
         except (CanopyError, httpx.TransportError) as exc:
             logger.warning(
-                "Failed to report outcome to Canopy for entity %s (%s): %s",
-                payload.entity_id,
-                payload.entity_type,
+                "Failed to report %d outcome(s) to Canopy for attempt %s: %s",
+                len(payload.results),
+                attempt_id,
                 exc,
             )
 
@@ -145,12 +184,11 @@ class CanopyClient:
     # ------------------------------------------------------------------
 
     def _ensure_authenticated(self) -> None:
-        """Login if we do not yet have an access token."""
         if self._access_token is None:
             self._login()
 
     def _login(self) -> None:
-        """POST /login with username + password; stores access_token + refresh_token."""
+        """POST /auth/login with form-encoded username + password."""
         url = f"{self._base_url}/auth/login"
         logger.debug("Authenticating with Canopy at %s", url)
         resp = self._client.post(
@@ -161,25 +199,14 @@ class CanopyClient:
             },
         )
         if resp.status_code >= 400:
-            raise CanopyError(
-                status_code=resp.status_code,
-                body=resp.text,
-                url=url,
-            )
+            raise CanopyError(status_code=resp.status_code, body=resp.text, url=url)
         data = resp.json()
         self._access_token = data["access_token"]
         self._refresh_token = data.get("refresh_token")
         logger.debug("Canopy login successful")
 
     def _do_refresh(self) -> None:
-        """POST /refresh with the stored refresh_token; updates stored tokens.
-
-        ASSUMPTION: refresh endpoint is POST /refresh with body
-        {"refresh_token": "..."} returning {"access_token": "...", "refresh_token": "..."}.
-        Adjust the URL and body if the actual endpoint differs.
-
-        Raises CanopyError on 4xx/5xx so the caller can fall back to re-login.
-        """
+        """POST /auth/refresh with the stored refresh_token."""
         url = f"{self._base_url}/auth/refresh"
         resp = self._client.post(url, json={"refresh_token": self._refresh_token})
         if resp.status_code >= 400:
@@ -191,7 +218,6 @@ class CanopyClient:
         logger.debug("Canopy token refreshed successfully")
 
     def _refresh_or_relogin(self) -> None:
-        """Try to refresh the token; fall back to full re-login if refresh fails."""
         if self._refresh_token:
             try:
                 self._do_refresh()
@@ -206,14 +232,10 @@ class CanopyClient:
     # Internal HTTP helpers
     # ------------------------------------------------------------------
 
-    def _get(self, path: str) -> httpx.Response:
-        return self._authenticated_request("GET", f"{self._base_url}{path}")
-
     def _post(self, path: str, **kwargs: Any) -> httpx.Response:
         return self._authenticated_request("POST", f"{self._base_url}{path}", **kwargs)
 
     def _authenticated_request(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
-        """Make an authenticated request, refreshing the token on 401 and retrying once."""
         self._ensure_authenticated()
         resp = self._raw_request(method, url, **kwargs)
         if resp.status_code == 401:
@@ -224,17 +246,14 @@ class CanopyClient:
         return resp
 
     def _raw_request(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
-        """Make a single request with the current access token.
-
-        Retries on transient transport errors via tenacity.
-        Returns the response regardless of HTTP status — callers check status.
-        """
-        # Copy kwargs so the retry closure captures a stable snapshot
         req_kwargs = dict(kwargs)
 
         @self._retry
         def _do() -> httpx.Response:
-            headers = {**req_kwargs.pop("headers", {}), "Authorization": f"Bearer {self._access_token}"}
+            headers = {
+                **req_kwargs.pop("headers", {}),
+                "Authorization": f"Bearer {self._access_token}",
+            }
             return self._client.request(method, url, headers=headers, **req_kwargs)
 
         return _do()

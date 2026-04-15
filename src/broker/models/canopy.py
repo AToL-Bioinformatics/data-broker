@@ -1,4 +1,14 @@
-"""Models for Canopy API request and response payloads."""
+"""Models for Canopy API request and response payloads.
+
+Base path: /api/v1/broker  (set via CANOPY_BASE_URL env var)
+
+Endpoints:
+  POST /broker/claims/ready      bulk claim by tax_id
+  POST /broker/claims/entity     targeted claim by type + id
+  POST /broker/claims/batch      claim multiple specific entities
+  POST /broker/validation        validate prerequisites (POST, not GET)
+  POST /broker/reports/{id}      report submission outcomes (batch, attempt_id path-only)
+"""
 
 from __future__ import annotations
 
@@ -9,70 +19,82 @@ from pydantic import BaseModel, Field
 from broker.enums import EntityType
 
 
-class CanopyEntityRelationships(BaseModel):
-    """Prerequisite accessions Canopy already knows for an entity.
+# ---------------------------------------------------------------------------
+# Claim response models
+# ---------------------------------------------------------------------------
 
-    Fields present depend on entity type:
-      experiments: project_accession, sample_accession (+ IDs)
-      reads:       experiment_accession (+ IDs)
-      projects:    organism_key, project_type
-      samples:     typically absent (null)
+
+class CanopyEntityPrerequisites(BaseModel):
+    """Prerequisite accession state returned inside a ClaimResponse entity.
+
+    Resolved fields — accessions Canopy already knows from prior submissions:
+      project_accession, sample_accession,
+      experiment_accession, run_accession
+
+    Required fields — what THIS entity needs before it can be submitted:
+      required_project_accession  ← canonical "needs a project" field
+      required_sample_accession
+      required_experiment_accession
+      required_run_accession
+
     """
 
-    # Experiment prerequisites
-    sample_id: str | None = None
-    sample_submission_id: str | None = None
-    sample_accession: str | None = None
+    # Already-resolved accessions
     project_accession: str | None = None
-
-    # Read prerequisites
-    experiment_id: str | None = None
-    experiment_submission_id: str | None = None
+    sample_accession: str | None = None
     experiment_accession: str | None = None
+    run_accession: str | None = None
 
-    # Project metadata
-    organism_key: str | None = None
-    project_type: str | None = None
+    # What this entity requires
+    required_project_accession: str | None = None
+    required_sample_accession: str | None = None
+    required_experiment_accession: str | None = None
+    required_run_accession: str | None = None
+
+
+class CanopyEntityFile(BaseModel):
+    filename: str
+    filetype: str
 
 
 class CanopyEntity(BaseModel):
-    """A single entity record returned inside a ClaimResponse."""
+    """A single entity record inside a ClaimResponse.
 
+    Entity type uses canonical broker names: project | sample | experiment | run
+    (the backend stores 'run' as read/read_submission internally).
+    """
+
+    type: EntityType
     id: str
-    submission_id: str | None = None
-    status: str | None = None
-    prepared_payload: dict[str, Any]
-    accession: str | None = None
-    relationships: CanopyEntityRelationships | None = None
-
-
-class CanopyOrganism(BaseModel):
-    organism_key: str
-    scientific_name: str | None = None
-    tax_id: int | None = None
-    culture_or_strain_id: str | None = None
+    tax_id: str | None = None
+    payload: dict[str, Any]
+    prerequisites: CanopyEntityPrerequisites | None = None
+    validation_hints: dict[str, Any] = Field(default_factory=dict)
+    files: list[CanopyEntityFile] = Field(default_factory=list)
 
 
 class ClaimResponse(BaseModel):
-    """Response from POST /broker/organisms/taxid{tax_id}/claim.
+    """Response from any POST /broker/claims/* endpoint.
 
-    Entities are grouped by type. The 'reads' key maps to EntityType.RUN.
+    attempt_id is None when the organism exists but has no claimable entities
+    — callers must handle this case (no-op, nothing to submit).
     """
 
-    attempt_id: str
-    organism_key: str | None = None
-    organism: CanopyOrganism | None = None
-    projects: list[CanopyEntity] = Field(default_factory=list)
-    samples: list[CanopyEntity] = Field(default_factory=list)
-    experiments: list[CanopyEntity] = Field(default_factory=list)
-    reads: list[CanopyEntity] = Field(default_factory=list)
+    attempt_id: str | None
+    tax_id: str | None = None
+    scope: str | None = None
+    entities: list[CanopyEntity] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Internal DTO: TransformService / SubmissionService
+# ---------------------------------------------------------------------------
 
 
 class CanopyEntityPayload(BaseModel):
-    """Internal DTO used by TransformService and SubmissionService.
+    """Internal DTO bridging EntitySubmissionState → TransformService.
 
-    Holds the fields needed to build ENA XML from a claimed entity.
-    Constructed from EntitySubmissionState (which stores raw_payload from CanopyEntity).
+    Not a Canopy API model — constructed locally from the stored raw_payload.
     """
 
     entity_id: str
@@ -83,25 +105,55 @@ class CanopyEntityPayload(BaseModel):
     experiment_accession: str | None = None
 
 
+# ---------------------------------------------------------------------------
+# Validation
+# ---------------------------------------------------------------------------
+
+
+class ValidationIssue(BaseModel):
+    field: str
+    message: str
+
+
 class ValidationResponse(BaseModel):
-    """Response from GET /broker/validate/{entity_type}/{entity_id}."""
+    """Response from POST /broker/validation."""
 
-    entity_id: str
     entity_type: EntityType
+    entity_id: str
     valid: bool
-    errors: list[str] = Field(default_factory=list)
-    prerequisites: dict[str, str] = Field(default_factory=dict)
+    issues: list[ValidationIssue] = Field(default_factory=list)
+    resolved_prerequisites: dict[str, str] = Field(default_factory=dict)
 
 
-class ReportPayload(BaseModel):
-    """Payload sent to Canopy after each entity submission outcome."""
+# ---------------------------------------------------------------------------
+# Reporting
+# ---------------------------------------------------------------------------
 
-    attempt_id: str
-    entity_id: str
+
+class ReportResult(BaseModel):
+    """A single entity outcome sent inside a ReportBatchPayload.
+
+    status must be one of: "accepted" | "rejected" | "submitting"
+    secondary_accession is used for BioSample (SAMEA...) — NOT biosample_accession.
+    response_payload should contain the full upstream ENA response for traceability.
+    """
+
     entity_type: EntityType
-    status: str  # "succeeded" | "failed"
+    entity_id: str
+    status: str  # "accepted" | "rejected" | "submitting"
     accession: str | None = None
-    biosample_accession: str | None = None
-    raw_receipt: str | None = None
-    submission_timestamp: str | None = None  # ISO 8601
-    error_message: str | None = None
+    secondary_accession: str | None = None
+    receipt_path: str | None = None
+    message: str | None = None
+    errors: list[str] = Field(default_factory=list)
+    response_payload: dict[str, Any] | None = None
+
+
+class ReportBatchPayload(BaseModel):
+    """Payload for POST /broker/reports/{attempt_id}.
+
+    attempt_id goes in the URL path only — not in this body.
+    """
+
+    tax_id: str | None = None
+    results: list[ReportResult]
