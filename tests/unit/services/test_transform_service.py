@@ -106,9 +106,13 @@ def test_sample_xml_with_attributes():
     xml = svc.to_sample_xml(payload)
     root = parse_xml(xml)
     attrs = root.findall("SAMPLE/SAMPLE_ATTRIBUTES/SAMPLE_ATTRIBUTE")
-    assert len(attrs) == 2
-    assert attrs[0].find("TAG").text == "tissue"
-    assert attrs[1].find("UNITS").text == "years"
+    tag_map = {a.find("TAG").text: a for a in attrs}
+    # Explicitly supplied attributes are present
+    assert tag_map["tissue"].find("VALUE").text == "blood"
+    assert tag_map["age"].find("UNITS").text == "years"
+    # Required defaults are also injected
+    assert "project name" in tag_map
+    assert "lifestage" in tag_map
 
 
 def test_sample_xml_missing_tax_id_raises():
@@ -119,6 +123,99 @@ def test_sample_xml_missing_tax_id_raises():
     )
     with pytest.raises(TransformError, match="tax_id"):
         svc.to_sample_xml(payload)
+
+
+def test_sample_missing_required_attributes_filled_with_not_provided():
+    """Missing required ATOL attributes must be injected as 'missing:not provided'."""
+    svc = make_service()
+    payload = make_payload(
+        EntityType.SAMPLE, "s1",
+        {"title": "T", "tax_id": "9606", "scientific_name": "Homo sapiens"},
+    )
+    xml = svc.to_sample_xml(payload)
+    root = parse_xml(xml)
+    attrs = root.findall("SAMPLE/SAMPLE_ATTRIBUTES/SAMPLE_ATTRIBUTE")
+    tag_map = {a.find("TAG").text: a.find("VALUE").text for a in attrs}
+
+    required_tags = [
+        "lifestage", "organism part", "collected_by", "collection_date",
+        "geographic location (region and locality)", "habitat", "sex",
+        "geographic location (country and/or sea)", "collecting institution",
+    ]
+    for tag in required_tags:
+        assert tag in tag_map, f"Required attribute '{tag}' missing from XML"
+        assert tag_map[tag] == "missing:not provided", (
+            f"Expected 'missing:not provided' for '{tag}', got '{tag_map[tag]}'"
+        )
+
+
+def test_sample_project_name_always_atol_genome_engine():
+    """'project name' must always be 'atol_genome_engine', even if payload differs."""
+    svc = make_service()
+    payload = make_payload(
+        EntityType.SAMPLE, "s1",
+        {
+            "title": "T",
+            "tax_id": "9606",
+            "scientific_name": "Homo sapiens",
+            "sample_attributes": [
+                {"tag": "project name", "value": "some_other_project"},
+            ],
+        },
+    )
+    xml = svc.to_sample_xml(payload)
+    root = parse_xml(xml)
+    attrs = root.findall("SAMPLE/SAMPLE_ATTRIBUTES/SAMPLE_ATTRIBUTE")
+    tag_map = {a.find("TAG").text: a.find("VALUE").text for a in attrs}
+    assert tag_map["project name"] == "atol_genome_engine"
+
+
+def test_sample_existing_attributes_not_overwritten():
+    """Provided values for required attributes must not be replaced with defaults."""
+    svc = make_service()
+    payload = make_payload(
+        EntityType.SAMPLE, "s1",
+        {
+            "title": "T",
+            "tax_id": "9606",
+            "scientific_name": "Homo sapiens",
+            "sample_attributes": [
+                {"tag": "sex", "value": "male"},
+                {"tag": "lifestage", "value": "adult"},
+            ],
+        },
+    )
+    xml = svc.to_sample_xml(payload)
+    root = parse_xml(xml)
+    attrs = root.findall("SAMPLE/SAMPLE_ATTRIBUTES/SAMPLE_ATTRIBUTE")
+    tag_map = {a.find("TAG").text: a.find("VALUE").text for a in attrs}
+    assert tag_map["sex"] == "male"
+    assert tag_map["lifestage"] == "adult"
+
+
+def test_sample_required_attributes_case_insensitive():
+    """Tag matching must be case-insensitive ('Lifestage' == 'lifestage')."""
+    svc = make_service()
+    payload = make_payload(
+        EntityType.SAMPLE, "s1",
+        {
+            "title": "T",
+            "tax_id": "9606",
+            "scientific_name": "Homo sapiens",
+            "sample_attributes": [{"tag": "Lifestage", "value": "juvenile"}],
+        },
+    )
+    xml = svc.to_sample_xml(payload)
+    root = parse_xml(xml)
+    attrs = root.findall("SAMPLE/SAMPLE_ATTRIBUTES/SAMPLE_ATTRIBUTE")
+    # Collect all lifestage-like entries (original casing preserved)
+    lifestage_vals = [
+        a.find("VALUE").text for a in attrs
+        if a.find("TAG").text.lower() == "lifestage"
+    ]
+    assert lifestage_vals == ["juvenile"], (
+        "Lifestage should not be duplicated by the default injection"
+    )
 
 
 # ---------------------------------------------------------------------------
