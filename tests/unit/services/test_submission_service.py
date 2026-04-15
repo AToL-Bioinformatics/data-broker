@@ -71,7 +71,6 @@ def make_service(
         "receipt_parser": MagicMock(),
         "state_store": MagicMock(),
         "receipt_store": MagicMock(),
-        "report_service": MagicMock(),
     }
     # Default transform output
     mocks["transform"].to_project_xml.return_value = "<PROJECT_SET/>"
@@ -98,7 +97,6 @@ def make_service(
         receipt_parser=mocks["receipt_parser"],
         state_store=mocks["state_store"],
         receipt_store=mocks["receipt_store"],
-        report_service=mocks["report_service"],
     )
     return svc, mocks
 
@@ -177,38 +175,6 @@ def test_receipt_stored_verbatim():
     call_args = mocks["receipt_store"].save.call_args
     raw_passed = call_args[0][3] if call_args[0] else call_args[1].get("raw_receipt")
     assert raw_passed == raw
-
-
-def test_report_called_after_state_saved():
-    """ReportService.report must be called after the state is persisted."""
-    svc, mocks = make_service()
-    attempt = make_attempt()
-    entity = make_project_entity()
-    attempt.entities[EntityType.PROJECT].append(entity)
-
-    call_order = []
-    mocks["state_store"].save.side_effect = lambda _: call_order.append("state_save")
-    mocks["report_service"].report.side_effect = lambda **kw: call_order.append("report")
-
-    svc.submit_entity(entity, attempt)
-
-    # The final state_save (SUCCEEDED) must precede the report call
-    last_state_save = max(i for i, v in enumerate(call_order) if v == "state_save")
-    first_report = next((i for i, v in enumerate(call_order) if v == "report"), None)
-    assert first_report is not None, "report was never called"
-    assert last_state_save < first_report, "State saved after report — wrong order"
-
-
-def test_report_called_even_on_failure():
-    """ReportService.report must be called even when ENA submission fails."""
-    svc, mocks = make_service(failure_result())
-    attempt = make_attempt()
-    entity = make_project_entity()
-    attempt.entities[EntityType.PROJECT].append(entity)
-
-    svc.submit_entity(entity, attempt)
-
-    mocks["report_service"].report.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

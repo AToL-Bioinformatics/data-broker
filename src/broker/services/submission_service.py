@@ -7,9 +7,13 @@ Checkpoint ordering guarantee (crash-safe):
   4. POST to ENAClient  ← never raises; returns ENASubmissionResult
   5. Save raw receipt to ReceiptStore
   6. Mark SUCCEEDED or FAILED → save state  ← local outcome is authoritative
-  7. Report to Canopy via ReportService  ← failure here is non-fatal
 
-Dry-run mode skips steps 3-7 and marks the entity SKIPPED after step 2.
+Reporting to Canopy is NOT done here.  It is the orchestrator's responsibility
+to batch-report all entity outcomes (and call /finalise) in a ``finally`` block
+after the full run completes, so that Canopy always receives a complete picture
+regardless of whether any entity failed or the process was interrupted.
+
+Dry-run mode skips steps 3-6 and marks the entity SKIPPED after step 2.
 """
 
 from __future__ import annotations
@@ -21,7 +25,6 @@ from broker.enums import EntityType, SubmissionMode
 from broker.models.attempt import AttemptState, EntitySubmissionState
 from broker.services.prerequisite_validation import PrerequisiteValidator
 from broker.services.receipt_parser import ReceiptParser
-from broker.services.report_service import ReportService
 from broker.services.transform_service import TransformService
 from broker.storage.receipt_store import ReceiptStore
 from broker.storage.state_store import StateStore
@@ -41,7 +44,6 @@ class SubmissionService:
         receipt_parser: ReceiptParser,
         state_store: StateStore,
         receipt_store: ReceiptStore,
-        report_service: ReportService,
     ) -> None:
         self._ena = ena_client
         self._transform = transform_service
@@ -49,7 +51,6 @@ class SubmissionService:
         self._receipt_parser = receipt_parser
         self._state_store = state_store
         self._receipt_store = receipt_store
-        self._report_service = report_service
 
     def submit_entity(
         self,
@@ -145,15 +146,6 @@ class SubmissionService:
             )
 
         self._state_store.save(attempt_state)
-
-        # Step 7: Report to Canopy (non-fatal if Canopy is unavailable)
-        self._report_service.report(
-            attempt_id=attempt_state.attempt_id,
-            entity=entity,
-            raw_receipt=result.raw_receipt or None,
-            receipt_path=receipt_path,
-            tax_id=attempt_state.tax_id,
-        )
 
         return entity
 

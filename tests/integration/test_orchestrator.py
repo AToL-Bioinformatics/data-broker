@@ -68,11 +68,25 @@ def make_mock_submission_service(side_effect=None):
     return svc
 
 
-def make_orchestrator(canopy_client, submission_service, state_store):
+def make_report_service():
+    return MagicMock()
+
+
+def make_orchestrator(canopy_client, submission_service, state_store, report_service=None):
     return Orchestrator(
         canopy_client=canopy_client,
         submission_service=submission_service,
         state_store=state_store,
+        report_service=report_service or make_report_service(),
+    )
+
+
+def make_resume_service(state_store, submission_service, canopy_client=None, report_service=None):
+    return ResumeService(
+        state_store=state_store,
+        submission_service=submission_service,
+        canopy_client=canopy_client or MagicMock(),
+        report_service=report_service or make_report_service(),
     )
 
 
@@ -244,7 +258,7 @@ def test_resume_skips_succeeded_entities(tmp_state_store):
     tmp_state_store.save(state)
 
     submission_svc = make_mock_submission_service()
-    resume_svc = ResumeService(tmp_state_store, submission_svc)
+    resume_svc = make_resume_service(tmp_state_store, submission_svc)
     resume_svc.resume("resume-1")
 
     # Only s1 should have been submitted; p1 was already succeeded
@@ -265,7 +279,7 @@ def test_resume_already_completed_returns_immediately(tmp_state_store):
     tmp_state_store.save(state)
 
     submission_svc = make_mock_submission_service()
-    resume_svc = ResumeService(tmp_state_store, submission_svc)
+    resume_svc = make_resume_service(tmp_state_store, submission_svc)
     resume_svc.resume("resume-2")
 
     submission_svc.submit_entity.assert_not_called()
@@ -273,7 +287,7 @@ def test_resume_already_completed_returns_immediately(tmp_state_store):
 
 def test_resume_not_found_raises(tmp_state_store):
     submission_svc = make_mock_submission_service()
-    resume_svc = ResumeService(tmp_state_store, submission_svc)
+    resume_svc = make_resume_service(tmp_state_store, submission_svc)
     with pytest.raises(AttemptNotFoundError):
         resume_svc.resume("nonexistent-id")
 
@@ -296,7 +310,7 @@ def test_resume_submitted_state_is_retried(tmp_state_store):
     tmp_state_store.save(state)
 
     submission_svc = make_mock_submission_service()
-    resume_svc = ResumeService(tmp_state_store, submission_svc)
+    resume_svc = make_resume_service(tmp_state_store, submission_svc)
     resume_svc.resume("resume-3")
 
     # Should have been re-submitted
@@ -424,8 +438,8 @@ def test_batch_error_calls_finalise(tmp_state_store):
     canopy.finalise_claim.assert_called_once_with("atm-fin4")
 
 
-def test_successful_run_does_not_call_finalise(tmp_state_store):
-    """finalise_claim must NOT be called when submission succeeds."""
+def test_successful_run_calls_finalise(tmp_state_store):
+    """finalise_claim must be called on success too — the finally block always runs."""
     claim = make_claim("atm-fin5", [make_entity_payload(EntityType.PROJECT, "p1")])
     canopy = MagicMock()
     canopy.claim_by_tax_id.return_value = claim
@@ -434,7 +448,90 @@ def test_successful_run_does_not_call_finalise(tmp_state_store):
     orchestrator = make_orchestrator(canopy, submission_svc, tmp_state_store)
     orchestrator.run_bulk("9606", only=None, submission_mode=SubmissionMode.NORMAL)
 
-    canopy.finalise_claim.assert_not_called()
+    canopy.finalise_claim.assert_called_once_with("atm-fin5")
+
+
+def test_successful_run_calls_report_attempt(tmp_state_store):
+    """report_service.report_attempt must be called after every successful run."""
+    claim = make_claim("atm-fin6", [make_entity_payload(EntityType.PROJECT, "p1")])
+    canopy = MagicMock()
+    canopy.claim_by_tax_id.return_value = claim
+    submission_svc = make_mock_submission_service()
+    report_svc = MagicMock()
+
+    orchestrator = make_orchestrator(canopy, submission_svc, tmp_state_store, report_service=report_svc)
+    orchestrator.run_bulk("9606", only=None, submission_mode=SubmissionMode.NORMAL)
+
+    report_svc.report_attempt.assert_called_once()
+
+
+def test_resume_reports_all_entities_including_terminal(tmp_state_store):
+    """resume must report ALL entities (including already-SUCCEEDED) to Canopy.
+
+    This covers the crash window where an entity was marked SUCCEEDED locally
+    but the per-entity report never fired.  Resume re-reports everything so
+    Canopy always gets a complete picture.
+    """
+    state = AttemptState(
+        attempt_id="resume-report-1",
+        tax_id="9606",
+        mode=AttemptMode.BULK,
+        status=AttemptStatus.IN_PROGRESS,
+    )
+    proj = EntitySubmissionState(
+        entity_id="p1",
+        entity_type=EntityType.PROJECT,
+        raw_payload={"title": "T", "description": "D"},
+    )
+    proj.mark_succeeded("PRJEB999")  # already terminal before resume
+    sample = EntitySubmissionState(
+        entity_id="s1",
+        entity_type=EntityType.SAMPLE,
+        raw_payload={"title": "T", "tax_id": "9606", "scientific_name": "Homo sapiens"},
+    )
+    state.entities[EntityType.PROJECT].append(proj)
+    state.entities[EntityType.SAMPLE].append(sample)
+    tmp_state_store.save(state)
+
+    canopy = MagicMock()
+    report_svc = MagicMock()
+    submission_svc = make_mock_submission_service()
+    resume_svc = make_resume_service(tmp_state_store, submission_svc, canopy_client=canopy, report_service=report_svc)
+    resume_svc.resume("resume-report-1")
+
+    # report_attempt called once, covering both entities
+    report_svc.report_attempt.assert_called_once()
+    # finalise called to close the lease
+    canopy.finalise_claim.assert_called_once_with("resume-report-1")
+
+
+def test_resume_calls_finalise_even_on_error(tmp_state_store):
+    """resume must finalise even when submission raises."""
+    state = AttemptState(
+        attempt_id="resume-err-1",
+        tax_id="9606",
+        mode=AttemptMode.BULK,
+        status=AttemptStatus.IN_PROGRESS,
+    )
+    proj = EntitySubmissionState(
+        entity_id="p1",
+        entity_type=EntityType.PROJECT,
+        raw_payload={"title": "T", "description": "D"},
+    )
+    state.entities[EntityType.PROJECT].append(proj)
+    tmp_state_store.save(state)
+
+    canopy = MagicMock()
+    report_svc = MagicMock()
+    submission_svc = MagicMock()
+    submission_svc.submit_entity.side_effect = RuntimeError("network failure")
+
+    resume_svc = make_resume_service(tmp_state_store, submission_svc, canopy_client=canopy, report_service=report_svc)
+    with pytest.raises(RuntimeError):
+        resume_svc.resume("resume-err-1")
+
+    canopy.finalise_claim.assert_called_once_with("resume-err-1")
+    report_svc.report_attempt.assert_called_once()
 
 
 def test_resume_final_status_written(tmp_state_store):
@@ -453,7 +550,7 @@ def test_resume_final_status_written(tmp_state_store):
     tmp_state_store.save(state)
 
     submission_svc = make_mock_submission_service()
-    resume_svc = ResumeService(tmp_state_store, submission_svc)
+    resume_svc = make_resume_service(tmp_state_store, submission_svc)
     resume_svc.resume("resume-4")
 
     loaded = tmp_state_store.load("resume-4")

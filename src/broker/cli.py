@@ -344,13 +344,13 @@ def _build_orchestrator(submission_mode: SubmissionMode):
         receipt_parser=receipt_parser,
         state_store=state_store,
         receipt_store=receipt_store,
-        report_service=report_service,
     )
 
     return Orchestrator(
         canopy_client=canopy_client,
         submission_service=submission_service,
         state_store=state_store,
+        report_service=report_service,
     )
 
 
@@ -387,10 +387,14 @@ def _build_resume_service():
         receipt_parser=receipt_parser,
         state_store=state_store,
         receipt_store=receipt_store,
-        report_service=report_service,
     )
 
-    return ResumeService(state_store=state_store, submission_service=submission_service)
+    return ResumeService(
+        state_store=state_store,
+        submission_service=submission_service,
+        canopy_client=canopy_client,
+        report_service=report_service,
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-"""Report submission outcomes back to ATOL.
+"""Report submission outcomes back to Canopy.
 
 Reporting is fire-and-forget: if the server is unavailable, a warning is logged
 but no exception is raised. The submission outcome is already persisted locally
@@ -9,17 +9,19 @@ Contract status values (the ONLY values the server accepts):
   "rejected"   — entity was rejected by ENA
   "submitting" — entity has been posted to ENA but outcome is not yet confirmed
                  (maps to our internal SUBMITTED checkpoint status)
+
+Only entities in SUCCEEDED, FAILED, or SUBMITTED states are included in the
+report.  PENDING entities have never been attempted; SKIPPED entities were
+dry-run only — neither should be reported to Canopy.
 """
 
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
-from pathlib import Path
 
 from broker.clients.canopy import CanopyClient
 from broker.enums import EntitySubmissionStatus
-from broker.models.attempt import EntitySubmissionState
+from broker.models.attempt import AttemptState
 from broker.models.canopy import ReportBatchPayload, ReportResult
 
 logger = logging.getLogger(__name__)
@@ -31,53 +33,67 @@ _STATUS_MAP: dict[EntitySubmissionStatus, str] = {
     EntitySubmissionStatus.SUBMITTED: "submitting",
 }
 
+# Only entities in these states have a meaningful outcome to report
+_REPORTABLE_STATUSES = frozenset(_STATUS_MAP.keys())
+
 
 class ReportService:
     def __init__(self, canopy_client: CanopyClient) -> None:
         self._canopy = canopy_client
 
-    def report(
-        self,
-        attempt_id: str,
-        entity: EntitySubmissionState,
-        raw_receipt: str | None,
-        receipt_path: Path | None = None,
-        tax_id: str | None = None,
-    ) -> None:
-        """Build a ReportBatchPayload (single result) and send it to Canopy.
+    def report_attempt(self, attempt: AttemptState) -> None:
+        """Batch-report ALL reportable entity outcomes for an attempt.
 
-        Args:
-            attempt_id:    Attempt UUID (goes in the URL path).
-            entity:        The entity whose outcome we're reporting.
-            raw_receipt:   Raw ENA response body for traceability.
-            receipt_path:  Filesystem path where the receipt was stored.
-            tax_id:        Organism tax_id for the report body.
+        Collects every entity that is in SUCCEEDED, FAILED, or SUBMITTED state
+        and sends them in a single POST /broker/reports/{attempt_id}.
+
+        Entities that are PENDING (never attempted) or SKIPPED (dry-run) are
+        excluded — they have no meaningful outcome to report.
+
+        This method is intended to be called from a ``finally`` block so that
+        Canopy always learns the outcome regardless of whether an exception is
+        propagating.  It never raises.
         """
-        contract_status = _STATUS_MAP.get(entity.status, "rejected")
+        if attempt.attempt_id is None:
+            return
 
-        result = ReportResult(
-            entity_type=entity.entity_type,
-            entity_id=entity.entity_id,
-            status=contract_status,
-            accession=entity.ena_accession,
-            secondary_accession=entity.biosample_accession,
-            receipt_path=str(receipt_path) if receipt_path else None,
-            message=(
-                "Submission accepted"
-                if entity.status == EntitySubmissionStatus.SUCCEEDED
-                else entity.error_message
-            ),
-            errors=[entity.error_message] if entity.error_message and entity.status == EntitySubmissionStatus.FAILED else [],
-            response_payload={"receipt": raw_receipt} if raw_receipt else None,
-        )
+        results: list[ReportResult] = []
 
-        batch = ReportBatchPayload(tax_id=tax_id, results=[result])
+        for entity in attempt.all_entities_flat():
+            if entity.status not in _REPORTABLE_STATUSES:
+                continue
+
+            contract_status = _STATUS_MAP[entity.status]
+
+            results.append(
+                ReportResult(
+                    entity_type=entity.entity_type,
+                    entity_id=entity.entity_id,
+                    status=contract_status,
+                    accession=entity.ena_accession,
+                    secondary_accession=entity.biosample_accession,
+                    message=(
+                        "Submission accepted"
+                        if entity.status == EntitySubmissionStatus.SUCCEEDED
+                        else entity.error_message
+                    ),
+                    errors=(
+                        [entity.error_message]
+                        if entity.error_message
+                        and entity.status == EntitySubmissionStatus.FAILED
+                        else []
+                    ),
+                )
+            )
+
+        if not results:
+            logger.debug("No reportable entities for attempt %s — skipping report", attempt.attempt_id)
+            return
 
         logger.info(
-            "Reporting %s outcome to Canopy: %s %s → %s",
-            contract_status,
-            entity.entity_type,
-            entity.entity_id,
-            entity.ena_accession or "no accession",
+            "Reporting %d outcome(s) to Canopy for attempt %s",
+            len(results),
+            attempt.attempt_id,
         )
-        self._canopy.report_outcome(attempt_id=attempt_id, payload=batch)
+        batch = ReportBatchPayload(tax_id=attempt.tax_id, results=results)
+        self._canopy.report_outcome(attempt_id=attempt.attempt_id, payload=batch)

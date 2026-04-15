@@ -31,6 +31,7 @@ from broker.enums import ENTITY_DEPENDENCY_ORDER, AttemptMode, AttemptStatus, En
 from broker.errors import PrerequisiteMissingError
 from broker.models.attempt import AttemptState, EntitySubmissionState
 from broker.models.canopy import ClaimResponse
+from broker.services.report_service import ReportService
 from broker.services.submission_service import SubmissionService
 from broker.storage.state_store import StateStore
 
@@ -43,10 +44,12 @@ class Orchestrator:
         canopy_client: CanopyClient,
         submission_service: SubmissionService,
         state_store: StateStore,
+        report_service: ReportService,
     ) -> None:
         self._canopy = canopy_client
         self._submission_service = submission_service
         self._state_store = state_store
+        self._report_service = report_service
 
     # ------------------------------------------------------------------
     # Bulk submission
@@ -102,10 +105,8 @@ class Orchestrator:
 
         try:
             self._run_entities(attempt, cli_overrides=cli_overrides, allow_state_fallback=allow_state_fallback)
-        except Exception:
-            logger.warning("Submission error — releasing Canopy lease for attempt %s", attempt.attempt_id)
-            self._canopy.finalise_claim(attempt.attempt_id)
-            raise
+        finally:
+            self._report_and_finalise(attempt)
 
         attempt.status = attempt.compute_status()
         self._state_store.save(attempt)
@@ -144,10 +145,8 @@ class Orchestrator:
 
         try:
             self._run_entities(attempt, cli_overrides=cli_overrides, allow_state_fallback=False)
-        except Exception:
-            logger.warning("Submission error — releasing Canopy lease for attempt %s", attempt.attempt_id)
-            self._canopy.finalise_claim(attempt.attempt_id)
-            raise
+        finally:
+            self._report_and_finalise(attempt)
 
         attempt.status = attempt.compute_status()
         self._state_store.save(attempt)
@@ -213,10 +212,8 @@ class Orchestrator:
         # No state fallback — prerequisites must be explicit
         try:
             self._run_entities(attempt, cli_overrides=cli_overrides, allow_state_fallback=False)
-        except Exception:
-            logger.warning("Submission error — releasing Canopy lease for attempt %s", attempt.attempt_id)
-            self._canopy.finalise_claim(attempt.attempt_id)
-            raise
+        finally:
+            self._report_and_finalise(attempt)
 
         attempt.status = attempt.compute_status()
         self._state_store.save(attempt)
@@ -263,6 +260,16 @@ class Orchestrator:
             )
             attempt.entities[ce.type].append(entity)
         return attempt
+
+    def _report_and_finalise(self, attempt: AttemptState) -> None:
+        """Batch-report all entity outcomes to Canopy and release the lease.
+
+        Always called in a ``finally`` block so it runs on both success and
+        failure paths.  Both inner calls are already fire-and-forget (they never
+        raise), so this method is safe to call while an exception is propagating.
+        """
+        self._report_service.report_attempt(attempt)
+        self._canopy.finalise_claim(attempt.attempt_id)
 
     def _run_entities(
         self,
