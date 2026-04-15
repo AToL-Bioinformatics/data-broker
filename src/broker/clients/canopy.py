@@ -10,6 +10,7 @@ Endpoints:
   POST /broker/claims/batch      claim multiple specific entities
   POST /broker/validation        validate prerequisites
   POST /broker/reports/{id}      report submission outcomes (attempt_id in path)
+  POST /broker/attempts/{id}/finalise  release lease when submission ends in error
 
 Auth flow:
   1. On first authenticated request: POST /auth/login with form-encoded
@@ -175,6 +176,24 @@ class CanopyClient:
             logger.warning(
                 "Failed to report %d outcome(s) to Canopy for attempt %s: %s",
                 len(payload.results),
+                attempt_id,
+                exc,
+            )
+
+    def finalise_claim(self, attempt_id: str) -> None:
+        """POST /broker/attempts/{attempt_id}/finalise — release lease for a failed attempt.
+
+        Must be called whenever submission ends in an error so that the lease
+        is closed and the entities become claimable again.  Fire-and-forget:
+        failure is logged as a warning and not re-raised so it never masks the
+        original exception.
+        """
+        try:
+            self._post(f"/broker/attempts/{attempt_id}/finalise")
+            logger.info("Canopy lease released for attempt %s", attempt_id)
+        except (CanopyError, httpx.TransportError) as exc:
+            logger.warning(
+                "Failed to finalise Canopy claim for attempt %s: %s",
                 attempt_id,
                 exc,
             )

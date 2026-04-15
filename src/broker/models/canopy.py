@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from broker.enums import EntityType
 
@@ -70,6 +70,12 @@ class CanopyEntity(BaseModel):
     payload: dict[str, Any]
     prerequisites: CanopyEntityPrerequisites | None = None
     files: list[CanopyEntityFile] = Field(default_factory=list)
+
+    @field_validator("files", mode="before")
+    @classmethod
+    def _coerce_null_files(cls, v: object) -> object:
+        """Server may return ``"files": null`` — treat it as an empty list."""
+        return v if v is not None else []
 
 
 class ClaimResponse(BaseModel):

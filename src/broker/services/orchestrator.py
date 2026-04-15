@@ -100,7 +100,12 @@ class Orchestrator:
         self._state_store.save(attempt)
         logger.info("Attempt %s created with %d entities", attempt.attempt_id, len(attempt.all_entities_flat()))
 
-        self._run_entities(attempt, cli_overrides=cli_overrides, allow_state_fallback=allow_state_fallback)
+        try:
+            self._run_entities(attempt, cli_overrides=cli_overrides, allow_state_fallback=allow_state_fallback)
+        except Exception:
+            logger.warning("Submission error — releasing Canopy lease for attempt %s", attempt.attempt_id)
+            self._canopy.finalise_claim(attempt.attempt_id)
+            raise
 
         attempt.status = attempt.compute_status()
         self._state_store.save(attempt)
@@ -137,7 +142,12 @@ class Orchestrator:
         )
         self._state_store.save(attempt)
 
-        self._run_entities(attempt, cli_overrides=cli_overrides, allow_state_fallback=False)
+        try:
+            self._run_entities(attempt, cli_overrides=cli_overrides, allow_state_fallback=False)
+        except Exception:
+            logger.warning("Submission error — releasing Canopy lease for attempt %s", attempt.attempt_id)
+            self._canopy.finalise_claim(attempt.attempt_id)
+            raise
 
         attempt.status = attempt.compute_status()
         self._state_store.save(attempt)
@@ -201,7 +211,12 @@ class Orchestrator:
         )
 
         # No state fallback — prerequisites must be explicit
-        self._run_entities(attempt, cli_overrides=cli_overrides, allow_state_fallback=False)
+        try:
+            self._run_entities(attempt, cli_overrides=cli_overrides, allow_state_fallback=False)
+        except Exception:
+            logger.warning("Submission error — releasing Canopy lease for attempt %s", attempt.attempt_id)
+            self._canopy.finalise_claim(attempt.attempt_id)
+            raise
 
         attempt.status = attempt.compute_status()
         self._state_store.save(attempt)

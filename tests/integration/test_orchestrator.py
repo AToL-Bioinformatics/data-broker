@@ -353,6 +353,90 @@ def test_batch_disables_state_fallback(tmp_state_store):
     assert call_kwargs.kwargs.get("allow_state_fallback") is False
 
 
+# ---------------------------------------------------------------------------
+# Finalise on error
+# ---------------------------------------------------------------------------
+
+
+def test_bulk_error_calls_finalise(tmp_state_store):
+    """run_bulk must call finalise_claim when _run_entities raises."""
+    claim = make_claim("atm-fin1", [make_entity_payload(EntityType.PROJECT, "p1")])
+    canopy = MagicMock()
+    canopy.claim_by_tax_id.return_value = claim
+
+    submission_svc = MagicMock()
+    submission_svc.submit_entity.side_effect = RuntimeError("boom")
+
+    orchestrator = make_orchestrator(canopy, submission_svc, tmp_state_store)
+    with pytest.raises(RuntimeError):
+        orchestrator.run_bulk("9606", only=None, submission_mode=SubmissionMode.NORMAL)
+
+    canopy.finalise_claim.assert_called_once_with("atm-fin1")
+
+
+def test_bulk_error_reraises_original_exception(tmp_state_store):
+    """run_bulk must re-raise the original exception after calling finalise."""
+    claim = make_claim("atm-fin2", [make_entity_payload(EntityType.PROJECT, "p1")])
+    canopy = MagicMock()
+    canopy.claim_by_tax_id.return_value = claim
+
+    submission_svc = MagicMock()
+    submission_svc.submit_entity.side_effect = PrerequisiteMissingError(
+        "sample", "s1", ["project_accession"]
+    )
+
+    orchestrator = make_orchestrator(canopy, submission_svc, tmp_state_store)
+    with pytest.raises(PrerequisiteMissingError):
+        orchestrator.run_bulk("9606", only=None, submission_mode=SubmissionMode.NORMAL)
+
+    canopy.finalise_claim.assert_called_once()
+
+
+def test_targeted_error_calls_finalise(tmp_state_store):
+    """run_targeted must call finalise_claim when submission raises."""
+    claim = make_claim("atm-fin3", [make_entity_payload(EntityType.SAMPLE, "s1")])
+    canopy = MagicMock()
+    canopy.claim_entity.return_value = claim
+
+    submission_svc = MagicMock()
+    submission_svc.submit_entity.side_effect = RuntimeError("network down")
+
+    orchestrator = make_orchestrator(canopy, submission_svc, tmp_state_store)
+    with pytest.raises(RuntimeError):
+        orchestrator.run_targeted(EntityType.SAMPLE, "s1")
+
+    canopy.finalise_claim.assert_called_once_with("atm-fin3")
+
+
+def test_batch_error_calls_finalise(tmp_state_store):
+    """run_batch must call finalise_claim when submission raises."""
+    claim = make_claim("atm-fin4", [make_entity_payload(EntityType.SAMPLE, "s1")])
+    canopy = MagicMock()
+    canopy.claim_batch.return_value = claim
+
+    submission_svc = MagicMock()
+    submission_svc.submit_entity.side_effect = RuntimeError("uh oh")
+
+    orchestrator = make_orchestrator(canopy, submission_svc, tmp_state_store)
+    with pytest.raises(RuntimeError):
+        orchestrator.run_batch(sample_ids=["s1"])
+
+    canopy.finalise_claim.assert_called_once_with("atm-fin4")
+
+
+def test_successful_run_does_not_call_finalise(tmp_state_store):
+    """finalise_claim must NOT be called when submission succeeds."""
+    claim = make_claim("atm-fin5", [make_entity_payload(EntityType.PROJECT, "p1")])
+    canopy = MagicMock()
+    canopy.claim_by_tax_id.return_value = claim
+    submission_svc = make_mock_submission_service()
+
+    orchestrator = make_orchestrator(canopy, submission_svc, tmp_state_store)
+    orchestrator.run_bulk("9606", only=None, submission_mode=SubmissionMode.NORMAL)
+
+    canopy.finalise_claim.assert_not_called()
+
+
 def test_resume_final_status_written(tmp_state_store):
     state = AttemptState(
         attempt_id="resume-4",

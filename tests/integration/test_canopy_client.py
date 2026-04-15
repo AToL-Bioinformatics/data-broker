@@ -411,3 +411,38 @@ def test_report_outcome_failure_does_not_raise(httpx_mock):
     )
     client = CanopyClient(make_settings())
     client.report_outcome("atm-1", make_report_payload("atm-1"))  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# Finalise claim
+# ---------------------------------------------------------------------------
+
+
+def test_finalise_claim_posts_to_correct_url(httpx_mock):
+    """finalise_claim must POST to /broker/attempts/{attempt_id}/finalise."""
+    add_login_mock(httpx_mock)
+    httpx_mock.add_response(
+        method="POST",
+        url="http://canopy.test/broker/attempts/atm-xyz/finalise",
+        json={"ok": True},
+        status_code=200,
+    )
+    client = CanopyClient(make_settings())
+    client.finalise_claim("atm-xyz")
+
+    finalise_reqs = [r for r in httpx_mock.get_requests() if "finalise" in r.url.path]
+    assert len(finalise_reqs) == 1
+    assert finalise_reqs[0].url.path == "/broker/attempts/atm-xyz/finalise"
+
+
+def test_finalise_claim_failure_does_not_raise(httpx_mock):
+    """finalise_claim logs a warning on failure but never raises."""
+    add_login_mock(httpx_mock)
+    httpx_mock.add_response(
+        method="POST",
+        url="http://canopy.test/broker/attempts/atm-xyz/finalise",
+        text="Service unavailable",
+        status_code=503,
+    )
+    client = CanopyClient(make_settings())
+    client.finalise_claim("atm-xyz")  # must not raise
