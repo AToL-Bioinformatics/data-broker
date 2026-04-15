@@ -50,7 +50,6 @@ CLAIM_RESPONSE = {
             "tax_id": "9606",
             "payload": {"title": "Test", "description": "Desc"},
             "prerequisites": None,
-            "validation_hints": {},
             "files": [],
         }
     ],

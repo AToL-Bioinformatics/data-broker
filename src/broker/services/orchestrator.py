@@ -235,16 +235,16 @@ class Orchestrator:
             hold_until_date=hold_until_date,
         )
         for ce in claim.entities:
-            prereqs = ce.prerequisites
+            p = ce.prerequisites
             entity = EntitySubmissionState(
                 entity_id=ce.id,
                 entity_type=ce.type,
                 raw_payload=ce.payload,
-                # Use already-resolved accessions from Canopy where available.
-                # The prerequisite_validator will verify required ones are present.
-                project_accession=prereqs.project_accession if prereqs else None,
-                sample_accession=prereqs.sample_accession if prereqs else None,
-                experiment_accession=prereqs.experiment_accession if prereqs else None,
+                # Prefer required_* fields (what this entity specifically needs).
+                # Fall back to the plain resolved field in case required_* is absent.
+                project_accession=(p.required_project_accession or p.project_accession) if p else None,
+                sample_accession=(p.required_sample_accession or p.sample_accession) if p else None,
+                experiment_accession=(p.required_experiment_accession or p.experiment_accession) if p else None,
             )
             attempt.entities[ce.type].append(entity)
         return attempt
