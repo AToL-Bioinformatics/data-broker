@@ -248,10 +248,19 @@ class Orchestrator:
         )
         for ce in claim.entities:
             p = ce.prerequisites
+            # tax_id and scientific_name are returned at entity root level by
+            # Canopy, not inside payload.  Merge them in so TransformService
+            # can find them when building sample XML.  Payload values win if
+            # already present (explicit payload takes precedence over root).
+            raw_payload = dict(ce.payload)
+            for field, value in (("tax_id", ce.tax_id), ("scientific_name", ce.scientific_name)):
+                if value and field not in raw_payload:
+                    raw_payload[field] = value
+
             entity = EntitySubmissionState(
                 entity_id=ce.id,
                 entity_type=ce.type,
-                raw_payload=ce.payload,
+                raw_payload=raw_payload,
                 # Prefer required_* fields (what this entity specifically needs).
                 # Fall back to the plain resolved field in case required_* is absent.
                 project_accession=(p.required_project_accession or p.project_accession) if p else None,

@@ -67,6 +67,7 @@ class CanopyEntity(BaseModel):
     type: EntityType
     id: str
     tax_id: str | None = None
+    scientific_name: str | None = None
     payload: dict[str, Any]
     prerequisites: CanopyEntityPrerequisites | None = None
     files: list[CanopyEntityFile] = Field(default_factory=list)

@@ -91,6 +91,60 @@ def make_resume_service(state_store, submission_service, canopy_client=None, rep
 
 
 # ---------------------------------------------------------------------------
+# _build_attempt_state — entity-level field propagation
+# ---------------------------------------------------------------------------
+
+
+def test_entity_root_fields_merged_into_raw_payload(tmp_state_store):
+    """tax_id and scientific_name at entity root level must appear in raw_payload.
+
+    Canopy returns both fields on the CanopyEntity object itself, not inside
+    payload.  _build_attempt_state must merge them in so the sample XML builder
+    can find them.
+    """
+    entity = CanopyEntity(
+        type=EntityType.SAMPLE,
+        id="s1",
+        tax_id="9606",
+        scientific_name="Homo sapiens",
+        payload={"title": "Homo sapiens blood"},
+    )
+    claim = ClaimResponse(attempt_id="atm-tx", entities=[entity])
+    canopy = MagicMock()
+    canopy.claim_by_tax_id.return_value = claim
+    submission_svc = make_mock_submission_service()
+
+    orchestrator = make_orchestrator(canopy, submission_svc, tmp_state_store)
+    attempt = orchestrator.run_bulk("9606", only=None, submission_mode=SubmissionMode.NORMAL)
+
+    sample_entity = attempt.entities[EntityType.SAMPLE][0]
+    assert sample_entity.raw_payload["tax_id"] == "9606"
+    assert sample_entity.raw_payload["scientific_name"] == "Homo sapiens"
+
+
+def test_entity_payload_fields_not_overwritten(tmp_state_store):
+    """If tax_id / scientific_name are already inside payload, payload wins."""
+    entity = CanopyEntity(
+        type=EntityType.SAMPLE,
+        id="s2",
+        tax_id="9606",
+        scientific_name="Homo sapiens",
+        payload={"title": "T", "tax_id": "10090", "scientific_name": "Mus musculus"},
+    )
+    claim = ClaimResponse(attempt_id="atm-tx2", entities=[entity])
+    canopy = MagicMock()
+    canopy.claim_by_tax_id.return_value = claim
+    submission_svc = make_mock_submission_service()
+
+    orchestrator = make_orchestrator(canopy, submission_svc, tmp_state_store)
+    attempt = orchestrator.run_bulk("9606", only=None, submission_mode=SubmissionMode.NORMAL)
+
+    sample_entity = attempt.entities[EntityType.SAMPLE][0]
+    assert sample_entity.raw_payload["tax_id"] == "10090"
+    assert sample_entity.raw_payload["scientific_name"] == "Mus musculus"
+
+
+# ---------------------------------------------------------------------------
 # Bulk submission — ordering
 # ---------------------------------------------------------------------------
 
