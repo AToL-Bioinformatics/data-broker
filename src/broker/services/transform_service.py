@@ -43,6 +43,18 @@ from broker.errors import BrokerError
 # - All other tags default to "missing:not provided" when absent from the
 #   Canopy payload, so that the submission is valid even when data is
 #   incomplete at the time of submission.
+# Required experiment library fields — substituted when absent from the payload.
+# library_layout is special: it becomes an XML element name (<PAIRED/> or <SINGLE/>),
+# so "missing:not provided" would be an invalid tag — default to PAIRED instead.
+_REQUIRED_EXPERIMENT_FIELDS: dict[str, str] = {
+    "library_name": "missing:not provided",
+    "library_strategy": "missing:not provided",
+    "library_source": "missing:not provided",
+    "library_selection": "missing:not provided",
+    "library_layout": "PAIRED",
+    "library_construction_protocol": "missing:not provided",
+}
+
 _REQUIRED_SAMPLE_ATTRIBUTES: dict[str, str] = {
     "project name": "atol_genome_engine",
     "lifestage": "missing:not provided",
@@ -128,12 +140,14 @@ class TransformService:
         etree.SubElement(design, "DESIGN_DESCRIPTION")  # empty element — ENA requires it
         etree.SubElement(design, "SAMPLE_DESCRIPTOR", accession=sample_accession)
         lib = etree.SubElement(design, "LIBRARY_DESCRIPTOR")
-        self._required_sub(lib, "LIBRARY_STRATEGY", data, "library_strategy", payload)
-        self._required_sub(lib, "LIBRARY_SOURCE", data, "library_source", payload)
-        self._required_sub(lib, "LIBRARY_SELECTION", data, "library_selection", payload)
+        etree.SubElement(lib, "LIBRARY_NAME").text = self._field_or_default(data, "library_name")
+        etree.SubElement(lib, "LIBRARY_STRATEGY").text = self._field_or_default(data, "library_strategy")
+        etree.SubElement(lib, "LIBRARY_SOURCE").text = self._field_or_default(data, "library_source")
+        etree.SubElement(lib, "LIBRARY_SELECTION").text = self._field_or_default(data, "library_selection")
         layout_el = etree.SubElement(lib, "LIBRARY_LAYOUT")
-        layout_val = self._require_field(data, "library_layout", payload)
+        layout_val = self._field_or_default(data, "library_layout")
         etree.SubElement(layout_el, layout_val.upper())
+        etree.SubElement(lib, "LIBRARY_CONSTRUCTION_PROTOCOL").text = self._field_or_default(data, "library_construction_protocol")
         platform_val = self._require_field(data, "platform", payload)
         platform_el = etree.SubElement(exp, "PLATFORM")
         instrument_el = etree.SubElement(platform_el, platform_val.upper())
@@ -157,23 +171,10 @@ class TransformService:
         alias = self._alias("run", payload.entity_id)
         run = etree.Element("RUN", alias=alias, center_name=self._center_name)
         etree.SubElement(run, "EXPERIMENT_REF", accession=experiment_accession)
-        files = data.get("files", [])
-        if not files:
-            raise TransformError(
-                f"run '{payload.entity_id}': 'files' is required in payload data "
-                f"but was missing or empty. Cannot build RUN XML."
-            )
         data_block = etree.SubElement(run, "DATA_BLOCK")
-        files_el = etree.SubElement(data_block, "FILES")
-        for f in files:
-            etree.SubElement(
-                files_el,
-                "FILE",
-                filename=str(f.get("filename", "")),
-                filetype=str(f.get("filetype", "")),
-                checksum_method=str(f.get("checksum_method", "MD5")),
-                checksum=str(f.get("checksum", "")),
-            )
+        files = etree.SubElement(data_block, "FILES")
+        etree.SubElement(files, "FILE", filename=data.get("file_name", "missing:not provided"), filetype=data.get("file_format", "missing:not provided"), checksum_method="MD5", checksum=data.get("file_checksum", "missing:not provided"))
+        files = data.get("files", [])
         root = etree.Element("RUN_SET")
         root.append(run)
         return self._to_string(root)
@@ -206,6 +207,19 @@ class TransformService:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _field_or_default(data: dict, field: str) -> str:
+        """Return the field value from data, or the configured default.
+
+        Falls back to ``_REQUIRED_EXPERIMENT_FIELDS`` for experiment library
+        fields.  Returns an empty string if the field is not in the defaults
+        map (callers that need a hard failure should use ``_require_field``).
+        """
+        val = data.get(field)
+        if val:
+            return str(val)
+        return _REQUIRED_EXPERIMENT_FIELDS.get(field, "")
 
     @staticmethod
     def _apply_required_sample_attributes(attrs: list[dict]) -> list[dict]:

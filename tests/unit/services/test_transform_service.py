@@ -137,16 +137,20 @@ def test_sample_missing_required_attributes_filled_with_not_provided():
     attrs = root.findall("SAMPLE/SAMPLE_ATTRIBUTES/SAMPLE_ATTRIBUTE")
     tag_map = {a.find("TAG").text: a.find("VALUE").text for a in attrs}
 
-    required_tags = [
-        "lifestage", "organism part", "collected_by", "collection_date",
+    # Tags that must be present and set to "missing:not provided"
+    not_provided_tags = [
+        "lifestage", "organism part", "collected_by",
         "geographic location (region and locality)", "habitat", "sex",
-        "geographic location (country and/or sea)", "collecting institution",
+        "collecting institution",
     ]
-    for tag in required_tags:
+    for tag in not_provided_tags:
         assert tag in tag_map, f"Required attribute '{tag}' missing from XML"
         assert tag_map[tag] == "missing:not provided", (
             f"Expected 'missing:not provided' for '{tag}', got '{tag_map[tag]}'"
         )
+    # Tags that must be present but have temporary overrides (not "missing:not provided")
+    assert "collection date" in tag_map
+    assert "geographic location (country and/or sea)" in tag_map
 
 
 def test_sample_project_name_always_atol_genome_engine():
@@ -263,6 +267,57 @@ def test_experiment_xml_missing_platform_raises():
     )
     with pytest.raises(TransformError, match="platform"):
         svc.to_experiment_xml(payload, "PRJEB1", "ERS1")
+
+
+def test_experiment_xml_missing_library_fields_use_defaults():
+    """Missing library fields must be filled with 'missing:not provided' (layout → PAIRED)."""
+    svc = make_service()
+    payload = make_payload(
+        EntityType.EXPERIMENT, "x1",
+        {
+            "title": "T",
+            "platform": "ILLUMINA",
+            "instrument_model": "HiSeq",
+            # all library fields intentionally absent
+        },
+    )
+    xml = svc.to_experiment_xml(payload, "PRJEB1", "ERS1")
+    root = parse_xml(xml)
+    lib = root.find("EXPERIMENT/DESIGN/LIBRARY_DESCRIPTOR")
+    assert lib.find("LIBRARY_NAME").text == "missing:not provided"
+    assert lib.find("LIBRARY_STRATEGY").text == "missing:not provided"
+    assert lib.find("LIBRARY_SOURCE").text == "missing:not provided"
+    assert lib.find("LIBRARY_SELECTION").text == "missing:not provided"
+    assert lib.find("LIBRARY_LAYOUT/PAIRED") is not None  # layout defaults to PAIRED
+    assert lib.find("LIBRARY_CONSTRUCTION_PROTOCOL").text == "missing:not provided"
+
+
+def test_experiment_xml_provided_library_fields_not_overwritten():
+    """Provided library fields must be used as-is, not replaced with defaults."""
+    svc = make_service()
+    payload = make_payload(
+        EntityType.EXPERIMENT, "x1",
+        {
+            "title": "T",
+            "platform": "ILLUMINA",
+            "instrument_model": "HiSeq",
+            "library_name": "lib-001",
+            "library_strategy": "RNA-Seq",
+            "library_source": "TRANSCRIPTOMIC",
+            "library_selection": "cDNA",
+            "library_layout": "SINGLE",
+            "library_construction_protocol": "Standard TruSeq protocol",
+        },
+    )
+    xml = svc.to_experiment_xml(payload, "PRJEB1", "ERS1")
+    root = parse_xml(xml)
+    lib = root.find("EXPERIMENT/DESIGN/LIBRARY_DESCRIPTOR")
+    assert lib.find("LIBRARY_NAME").text == "lib-001"
+    assert lib.find("LIBRARY_STRATEGY").text == "RNA-Seq"
+    assert lib.find("LIBRARY_SOURCE").text == "TRANSCRIPTOMIC"
+    assert lib.find("LIBRARY_SELECTION").text == "cDNA"
+    assert lib.find("LIBRARY_LAYOUT/SINGLE") is not None
+    assert lib.find("LIBRARY_CONSTRUCTION_PROTOCOL").text == "Standard TruSeq protocol"
 
 
 # ---------------------------------------------------------------------------
