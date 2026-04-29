@@ -167,10 +167,16 @@ class SubmissionService:
         entity: EntitySubmissionState,
         attempt_state: AttemptState,
     ) -> None:
-        """Request a ToLID for a successfully submitted sample.
+        """Request a ToLID then submit a MODIFY to ENA to record it on the sample.
 
-        Uses the ENA sample accession as the specimen_id.  Stores the result
-        on the entity and saves state.  Failures are logged and silently ignored.
+        Flow:
+          1. POST to ToLID service → get tolid string
+          2. Store tolid on entity + save state
+          3. Build SAMPLE_SET (full record + tolid attribute) with MODIFY action
+          4. POST to ENA — never raises; failures are logged and ignored
+
+        A failure at any step is fire-and-forget: the original sample
+        submission is already SUCCEEDED and is not affected.
         """
         tax_id = entity.raw_payload.get("tax_id", "")
         scientific_name = entity.raw_payload.get("scientific_name")
@@ -185,15 +191,54 @@ class SubmissionService:
             taxonomy_id=tax_id,
             confirmation_name=scientific_name,
         )
-        if tolid:
-            entity.tolid = tolid
-            logger.info("ToLID assigned for sample %s: %s", entity.entity_id, tolid)
-            self._state_store.save(attempt_state)
-        else:
+
+        if not tolid:
             logger.warning(
-                "No ToLID returned for sample %s (specimen_id=%s) — continuing without it",
+                "No ToLID returned for sample %s (specimen_id=%s) — skipping ENA update",
                 entity.entity_id,
                 entity.ena_accession,
+            )
+            return
+
+        # Persist tolid before the ENA MODIFY so a crash here doesn't lose it
+        entity.tolid = tolid
+        logger.info("ToLID assigned for sample %s: %s", entity.entity_id, tolid)
+        self._state_store.save(attempt_state)
+
+        # Build the MODIFY payload — full sample record with tolid attribute added
+        from broker.models.canopy import CanopyEntityPayload
+
+        payload = CanopyEntityPayload(
+            entity_id=entity.entity_id,
+            entity_type=entity.entity_type,
+            data=entity.raw_payload,
+        )
+        sample_xml = self._transform.to_sample_modify_xml(
+            payload=payload,
+            ena_accession=entity.ena_accession,
+            tolid=tolid,
+        )
+        submission_xml = self._transform.build_submission_xml(action="MODIFY")
+
+        logger.info(
+            "Submitting MODIFY to ENA for sample %s to record ToLID %s",
+            entity.entity_id,
+            tolid,
+        )
+        result = self._ena.submit_sample(entity.entity_id, submission_xml, sample_xml)
+
+        if result.success:
+            logger.info(
+                "ENA MODIFY succeeded for sample %s (ToLID: %s)",
+                entity.entity_id,
+                tolid,
+            )
+        else:
+            logger.warning(
+                "ENA MODIFY failed for sample %s (ToLID: %s) — %s",
+                entity.entity_id,
+                tolid,
+                result.error_message or "no detail",
             )
 
     # ------------------------------------------------------------------

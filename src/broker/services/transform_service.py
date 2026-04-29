@@ -101,25 +101,36 @@ class TransformService:
 
     def to_sample_xml(self, payload: CanopyEntityPayload) -> str:
         """Build SAMPLE_SET XML from a Canopy sample payload."""
-        data = payload.data
-        alias = self._alias("sample", payload.entity_id)
-        sample = etree.Element("SAMPLE", alias=alias, center_name=self._center_name)
-        self._required_sub(sample, "TITLE", data, "title", payload)
-        name = etree.SubElement(sample, "SAMPLE_NAME")
-        self._required_sub(name, "TAXON_ID", data, "tax_id", payload)
-        self._required_sub(name, "SCIENTIFIC_NAME", data, "scientific_name", payload)
-        common = data.get("common_name")
-        if common:
-            etree.SubElement(name, "COMMON_NAME").text = str(common)
-        attrs = self._apply_required_sample_attributes(data.get("sample_attributes", []))
-        if attrs:
-            attrs_el = etree.SubElement(sample, "SAMPLE_ATTRIBUTES")
-            for attr in attrs:
-                attr_el = etree.SubElement(attrs_el, "SAMPLE_ATTRIBUTE")
-                etree.SubElement(attr_el, "TAG").text = str(attr.get("tag", ""))
-                etree.SubElement(attr_el, "VALUE").text = str(attr.get("value", ""))
-                if "units" in attr:
-                    etree.SubElement(attr_el, "UNITS").text = str(attr["units"])
+        sample = self._build_sample_element(payload)
+        root = etree.Element("SAMPLE_SET")
+        root.append(sample)
+        return self._to_string(root)
+
+    def to_sample_modify_xml(
+        self,
+        payload: CanopyEntityPayload,
+        ena_accession: str,
+        tolid: str,
+    ) -> str:
+        """Build a SAMPLE_SET XML for a MODIFY submission.
+
+        Identical to the original sample XML except:
+        - The ``accession`` attribute is set on ``<SAMPLE>`` so ENA can locate
+          the existing record.
+        - A ``tolid`` SAMPLE_ATTRIBUTE is injected before the full attribute
+          list is built (so it goes through ``_apply_required_sample_attributes``
+          alongside any other user-supplied attributes).
+        """
+        # Inject tolid into a copy of sample_attributes before building
+        existing_attrs = list(payload.data.get("sample_attributes", []))
+        attrs_with_tolid = [{"tag": "tolid", "value": tolid}] + existing_attrs
+
+        # Build a patched payload dict so the shared builder picks up the tolid
+        patched_data = {**payload.data, "sample_attributes": attrs_with_tolid}
+        patched_payload = payload.model_copy(update={"data": patched_data})
+
+        sample = self._build_sample_element(patched_payload)
+        sample.set("accession", ena_accession)
         root = etree.Element("SAMPLE_SET")
         root.append(sample)
         return self._to_string(root)
@@ -168,13 +179,25 @@ class TransformService:
         See models/ena.py ENARunFile for the file metadata shape.
         """
         data = payload.data
+        files_data = data.get("files", [])
+        if not files_data:
+            raise TransformError(
+                f"run '{payload.entity_id}': 'files' list is missing or empty"
+            )
         alias = self._alias("run", payload.entity_id)
         run = etree.Element("RUN", alias=alias, center_name=self._center_name)
         etree.SubElement(run, "EXPERIMENT_REF", accession=experiment_accession)
         data_block = etree.SubElement(run, "DATA_BLOCK")
-        files = etree.SubElement(data_block, "FILES")
-        etree.SubElement(files, "FILE", filename=data.get("file_name", "missing:not provided"), filetype=data.get("file_format", "missing:not provided"), checksum_method="MD5", checksum=data.get("file_checksum", "missing:not provided"))
-        files = data.get("files", [])
+        files_el = etree.SubElement(data_block, "FILES")
+        for f in files_data:
+            etree.SubElement(
+                files_el,
+                "FILE",
+                filename=f.get("filename", "missing:not provided"),
+                filetype=f.get("filetype", "missing:not provided"),
+                checksum_method=f.get("checksum_method", "MD5"),
+                checksum=f.get("checksum", "missing:not provided"),
+            )
         root = etree.Element("RUN_SET")
         root.append(run)
         return self._to_string(root)
@@ -207,6 +230,34 @@ class TransformService:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _build_sample_element(self, payload: CanopyEntityPayload) -> etree._Element:
+        """Build a ``<SAMPLE>`` element from a payload.
+
+        Used by both ``to_sample_xml`` (ADD) and ``to_sample_modify_xml``
+        (MODIFY).  The caller is responsible for setting the ``accession``
+        attribute on the returned element when needed.
+        """
+        data = payload.data
+        alias = self._alias("sample", payload.entity_id)
+        sample = etree.Element("SAMPLE", alias=alias, center_name=self._center_name)
+        self._required_sub(sample, "TITLE", data, "title", payload)
+        name = etree.SubElement(sample, "SAMPLE_NAME")
+        self._required_sub(name, "TAXON_ID", data, "tax_id", payload)
+        self._required_sub(name, "SCIENTIFIC_NAME", data, "scientific_name", payload)
+        common = data.get("common_name")
+        if common:
+            etree.SubElement(name, "COMMON_NAME").text = str(common)
+        attrs = self._apply_required_sample_attributes(data.get("sample_attributes", []))
+        if attrs:
+            attrs_el = etree.SubElement(sample, "SAMPLE_ATTRIBUTES")
+            for attr in attrs:
+                attr_el = etree.SubElement(attrs_el, "SAMPLE_ATTRIBUTE")
+                etree.SubElement(attr_el, "TAG").text = str(attr.get("tag", ""))
+                etree.SubElement(attr_el, "VALUE").text = str(attr.get("value", ""))
+                if "units" in attr:
+                    etree.SubElement(attr_el, "UNITS").text = str(attr["units"])
+        return sample
 
     @staticmethod
     def _field_or_default(data: dict, field: str) -> str:
