@@ -21,7 +21,8 @@ from __future__ import annotations
 import logging
 
 from broker.clients.ena import ENAClient
-from broker.enums import EntityType, SubmissionMode
+from broker.clients.tolid import ToLIDClient
+from broker.enums import EntitySubmissionStatus, EntityType, SubmissionMode
 from broker.models.attempt import AttemptState, EntitySubmissionState
 from broker.services.prerequisite_validation import PrerequisiteValidator
 from broker.services.receipt_parser import ReceiptParser
@@ -44,6 +45,7 @@ class SubmissionService:
         receipt_parser: ReceiptParser,
         state_store: StateStore,
         receipt_store: ReceiptStore,
+        tolid_client: ToLIDClient | None = None,
     ) -> None:
         self._ena = ena_client
         self._transform = transform_service
@@ -51,6 +53,7 @@ class SubmissionService:
         self._receipt_parser = receipt_parser
         self._state_store = state_store
         self._receipt_store = receipt_store
+        self._tolid_client = tolid_client
 
     def submit_entity(
         self,
@@ -147,7 +150,51 @@ class SubmissionService:
 
         self._state_store.save(attempt_state)
 
+        # Step 7 (samples only): Request a Tree of Life ID using the ENA accession.
+        # Fire-and-forget — a ToLID failure never fails the submission.
+        if (
+            entity.status == EntitySubmissionStatus.SUCCEEDED
+            and entity.entity_type == EntityType.SAMPLE
+            and self._tolid_client is not None
+            and entity.ena_accession
+        ):
+            self._request_tolid(entity, attempt_state)
+
         return entity
+
+    def _request_tolid(
+        self,
+        entity: EntitySubmissionState,
+        attempt_state: AttemptState,
+    ) -> None:
+        """Request a ToLID for a successfully submitted sample.
+
+        Uses the ENA sample accession as the specimen_id.  Stores the result
+        on the entity and saves state.  Failures are logged and silently ignored.
+        """
+        tax_id = entity.raw_payload.get("tax_id", "")
+        scientific_name = entity.raw_payload.get("scientific_name")
+
+        logger.info(
+            "Requesting ToLID for sample %s (specimen_id=%s)",
+            entity.entity_id,
+            entity.ena_accession,
+        )
+        tolid = self._tolid_client.request_tolid(
+            specimen_id=entity.ena_accession,
+            taxonomy_id=tax_id,
+            confirmation_name=scientific_name,
+        )
+        if tolid:
+            entity.tolid = tolid
+            logger.info("ToLID assigned for sample %s: %s", entity.entity_id, tolid)
+            self._state_store.save(attempt_state)
+        else:
+            logger.warning(
+                "No ToLID returned for sample %s (specimen_id=%s) — continuing without it",
+                entity.entity_id,
+                entity.ena_accession,
+            )
 
     # ------------------------------------------------------------------
     # Internal helpers

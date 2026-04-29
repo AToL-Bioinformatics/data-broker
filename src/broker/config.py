@@ -15,6 +15,10 @@ Optional variables (defaults shown):
   HTTP_MAX_RETRIES       Max retry attempts for transient HTTP errors (3)
   HTTP_RETRY_MIN_WAIT    Minimum retry backoff in seconds (1.0)
   HTTP_RETRY_MAX_WAIT    Maximum retry backoff in seconds (30.0)
+
+ToLID (optional — ToLID requests are skipped when TOLID_API_KEY is not set):
+  TOLID_API_KEY       API key for the Sanger Tree of Life ID service
+  TOLID_BASE_URL      ToLID service base URL (https://id.tol.sanger.ac.uk)
 """
 
 from __future__ import annotations
@@ -58,6 +62,13 @@ class BrokerSettings(BaseSettings):
     http_max_retries: int = Field(default=3, alias="HTTP_MAX_RETRIES")
     http_retry_min_wait: float = Field(default=1.0, alias="HTTP_RETRY_MIN_WAIT")
     http_retry_max_wait: float = Field(default=30.0, alias="HTTP_RETRY_MAX_WAIT")
+
+    # ToLID — optional; skip ToLID requests when api key is absent
+    tolid_api_key: str | None = Field(default=None, alias="TOLID_API_KEY")
+    tolid_base_url: str = Field(
+        default="https://id.tol.sanger.ac.uk",
+        alias="TOLID_BASE_URL",
+    )
 
 
 @lru_cache(maxsize=1)

@@ -142,6 +142,7 @@ class ReportResult(BaseModel):
     status must be one of: "accepted" | "rejected" | "submitting"
     secondary_accession is used for BioSample (SAMEA...) — NOT biosample_accession.
     response_payload should contain the full upstream ENA response for traceability.
+    tolid is the Tree of Life ID assigned after a successful ToLID request (samples only).
     """
 
     entity_type: EntityType
@@ -153,6 +154,7 @@ class ReportResult(BaseModel):
     message: str | None = None
     errors: list[str] = Field(default_factory=list)
     response_payload: dict[str, Any] | None = None
+    tolid: str | None = None
 
 
 class ReportBatchPayload(BaseModel):

@@ -314,6 +314,7 @@ def _build_orchestrator(submission_mode: SubmissionMode):
     """Wire all clients and services and return an Orchestrator."""
     from broker.clients.canopy import CanopyClient
     from broker.clients.ena import ENAClient
+    from broker.clients.tolid import ToLIDClient
     from broker.config import get_settings
     from broker.services.orchestrator import Orchestrator
     from broker.services.prerequisite_validation import PrerequisiteValidator
@@ -329,6 +330,13 @@ def _build_orchestrator(submission_mode: SubmissionMode):
     canopy_client = CanopyClient(settings)
     ena_client = ENAClient(settings)
 
+    # ToLID client is optional — only created when an API key is configured
+    tolid_client = (
+        ToLIDClient(api_key=settings.tolid_api_key, base_url=settings.tolid_base_url)
+        if settings.tolid_api_key
+        else None
+    )
+
     state_store = StateStore(settings.state_dir)
     receipt_store = ReceiptStore(settings.receipt_dir)
 
@@ -344,6 +352,7 @@ def _build_orchestrator(submission_mode: SubmissionMode):
         receipt_parser=receipt_parser,
         state_store=state_store,
         receipt_store=receipt_store,
+        tolid_client=tolid_client,
     )
 
     return Orchestrator(
@@ -357,6 +366,7 @@ def _build_orchestrator(submission_mode: SubmissionMode):
 def _build_resume_service():
     from broker.clients.canopy import CanopyClient
     from broker.clients.ena import ENAClient
+    from broker.clients.tolid import ToLIDClient
     from broker.config import get_settings
     from broker.services.prerequisite_validation import PrerequisiteValidator
     from broker.services.receipt_parser import ReceiptParser
@@ -372,6 +382,12 @@ def _build_resume_service():
     canopy_client = CanopyClient(settings)
     ena_client = ENAClient(settings)
 
+    tolid_client = (
+        ToLIDClient(api_key=settings.tolid_api_key, base_url=settings.tolid_base_url)
+        if settings.tolid_api_key
+        else None
+    )
+
     state_store = StateStore(settings.state_dir)
     receipt_store = ReceiptStore(settings.receipt_dir)
 
@@ -387,6 +403,7 @@ def _build_resume_service():
         receipt_parser=receipt_parser,
         state_store=state_store,
         receipt_store=receipt_store,
+        tolid_client=tolid_client,
     )
 
     return ResumeService(
@@ -412,6 +429,7 @@ def _render_attempt(attempt) -> None:
     table.add_column("Status")
     table.add_column("Accession", style="green")
     table.add_column("BioSample", style="green")
+    table.add_column("ToLID", style="green")
     table.add_column("Error", style="red")
 
     status_styles = {
@@ -430,6 +448,7 @@ def _render_attempt(attempt) -> None:
             f"[{style}]{entity.status}[/{style}]",
             entity.ena_accession or "",
             entity.biosample_accession or "",
+            entity.tolid or "",
             (entity.error_message or "")[:80],
         )
 

@@ -72,6 +72,7 @@ class ReportService:
                     status=contract_status,
                     accession=entity.ena_accession,
                     secondary_accession=entity.biosample_accession,
+                    tolid=entity.tolid,
                     message=(
                         "Submission accepted"
                         if entity.status == EntitySubmissionStatus.SUCCEEDED

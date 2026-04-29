@@ -41,6 +41,9 @@ class EntitySubmissionState(BaseModel):
     ena_accession: str | None = None  # primary: PRJEB*, ERS*, ERX*, ERR*
     biosample_accession: str | None = None  # secondary BioSample accession (samples only)
 
+    # Tree of Life ID — populated after a successful ToLID request (samples only)
+    tolid: str | None = None
+
     # Error tracking
     error_message: str | None = None
 
