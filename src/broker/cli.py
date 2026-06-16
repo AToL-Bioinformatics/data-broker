@@ -40,7 +40,9 @@ app = typer.Typer(
     add_completion=False,
 )
 submit_app = typer.Typer(help="Submission commands.", no_args_is_help=True)
+tolid_app = typer.Typer(help="Tree of Life ID (ToLID) commands.", no_args_is_help=True)
 app.add_typer(submit_app, name="submit")
+app.add_typer(tolid_app, name="tolid")
 
 console = Console()
 err_console = Console(stderr=True, style="bold red")
@@ -306,6 +308,62 @@ def resume(
 
 
 # ---------------------------------------------------------------------------
+# broker tolid request
+# ---------------------------------------------------------------------------
+
+
+@tolid_app.command("request")
+def tolid_request(
+    attempt_id: Annotated[str, typer.Option("--attempt-id", help="Attempt ID whose specimen samples should be processed")],
+    update_ena: Annotated[
+        bool,
+        typer.Option(
+            "--update-ena/--no-update-ena",
+            help=(
+                "Submit a MODIFY to ENA after each successful ToLID request "
+                "to record the tolid sample attribute (default: on)."
+            ),
+        ),
+    ] = True,
+) -> None:
+    """Request Tree of Life IDs for specimen samples from a completed attempt.
+
+    Only samples with ``kind=specimen`` in their payload are eligible.
+    Samples that already have a tolid stored are skipped automatically.
+
+    By default, a MODIFY submission is sent to ENA to record the tolid
+    attribute on the sample record.  Pass --no-update-ena to fetch ToLIDs
+    without touching ENA (useful for testing or if you want to apply them
+    separately).
+
+    \b
+    Examples:
+      broker tolid request --attempt-id abc-123
+      broker tolid request --attempt-id abc-123 --no-update-ena
+    """
+    from broker.errors import BrokerError
+    from broker.storage.state_store import StateStore
+    from broker.config import get_settings
+
+    try:
+        settings = get_settings()
+        state_store = StateStore(settings.state_dir)
+        attempt = state_store.load(attempt_id)
+
+        tolid_svc = _build_tolid_service()
+        results = tolid_svc.process_attempt(attempt, update_ena=update_ena)
+
+        _render_tolid_results(results, attempt_id, update_ena)
+
+        if any(r.error for r in results):
+            raise typer.Exit(code=1)
+
+    except BrokerError as exc:
+        err_console.print(f"[ERROR] {exc}")
+        raise typer.Exit(code=1)
+
+
+# ---------------------------------------------------------------------------
 # Wiring — manual dependency injection
 # ---------------------------------------------------------------------------
 
@@ -314,7 +372,6 @@ def _build_orchestrator(submission_mode: SubmissionMode):
     """Wire all clients and services and return an Orchestrator."""
     from broker.clients.canopy import CanopyClient
     from broker.clients.ena import ENAClient
-    from broker.clients.tolid import ToLIDClient
     from broker.config import get_settings
     from broker.services.orchestrator import Orchestrator
     from broker.services.prerequisite_validation import PrerequisiteValidator
@@ -330,13 +387,6 @@ def _build_orchestrator(submission_mode: SubmissionMode):
     canopy_client = CanopyClient(settings)
     ena_client = ENAClient(settings)
 
-    # ToLID client is optional — only created when an API key is configured
-    tolid_client = (
-        ToLIDClient(api_key=settings.tolid_api_key, base_url=settings.tolid_base_url)
-        if settings.tolid_api_key
-        else None
-    )
-
     state_store = StateStore(settings.state_dir)
     receipt_store = ReceiptStore(settings.receipt_dir)
 
@@ -352,7 +402,6 @@ def _build_orchestrator(submission_mode: SubmissionMode):
         receipt_parser=receipt_parser,
         state_store=state_store,
         receipt_store=receipt_store,
-        tolid_client=tolid_client,
     )
 
     return Orchestrator(
@@ -366,7 +415,6 @@ def _build_orchestrator(submission_mode: SubmissionMode):
 def _build_resume_service():
     from broker.clients.canopy import CanopyClient
     from broker.clients.ena import ENAClient
-    from broker.clients.tolid import ToLIDClient
     from broker.config import get_settings
     from broker.services.prerequisite_validation import PrerequisiteValidator
     from broker.services.receipt_parser import ReceiptParser
@@ -382,12 +430,6 @@ def _build_resume_service():
     canopy_client = CanopyClient(settings)
     ena_client = ENAClient(settings)
 
-    tolid_client = (
-        ToLIDClient(api_key=settings.tolid_api_key, base_url=settings.tolid_base_url)
-        if settings.tolid_api_key
-        else None
-    )
-
     state_store = StateStore(settings.state_dir)
     receipt_store = ReceiptStore(settings.receipt_dir)
 
@@ -403,7 +445,6 @@ def _build_resume_service():
         receipt_parser=receipt_parser,
         state_store=state_store,
         receipt_store=receipt_store,
-        tolid_client=tolid_client,
     )
 
     return ResumeService(
@@ -411,6 +452,34 @@ def _build_resume_service():
         submission_service=submission_service,
         canopy_client=canopy_client,
         report_service=report_service,
+    )
+
+
+def _build_tolid_service():
+    from broker.clients.ena import ENAClient
+    from broker.clients.tolid import ToLIDClient
+    from broker.config import get_settings
+    from broker.errors import ConfigurationError
+    from broker.services.tolid_service import ToLIDService
+    from broker.services.transform_service import TransformService
+    from broker.storage.state_store import StateStore
+
+    settings = get_settings()
+
+    if not settings.tolid_api_key:
+        raise ConfigurationError(
+            "TOLID_API_KEY is not set. "
+            "Set it in your .env file or environment to use ToLID features."
+        )
+
+    return ToLIDService(
+        tolid_client=ToLIDClient(
+            api_key=settings.tolid_api_key,
+            base_url=settings.tolid_base_url,
+        ),
+        ena_client=ENAClient(settings),
+        transform_service=TransformService(webin_account=settings.webin_username),
+        state_store=StateStore(settings.state_dir),
     )
 
 
@@ -454,6 +523,52 @@ def _render_attempt(attempt) -> None:
 
     console.print(table)
     console.print(f"State saved to: ~/.broker/state/{attempt.attempt_id}.json")
+
+
+def _render_tolid_results(results, attempt_id: str, update_ena: bool) -> None:
+    """Render ToLID request outcomes as a Rich table."""
+    from broker.services.tolid_service import ToLIDResult
+
+    table = Table(title=f"ToLID results — attempt {attempt_id}")
+    table.add_column("Sample ID", style="cyan")
+    table.add_column("ENA Accession", style="green")
+    table.add_column("ToLID", style="green")
+    if update_ena:
+        table.add_column("ENA Updated")
+    table.add_column("Notes", style="dim")
+
+    for r in results:
+        if r.skipped:
+            notes = r.skip_reason or "skipped"
+            tolid_cell = ""
+            row = [r.entity_id, r.ena_accession, tolid_cell]
+            if update_ena:
+                row.append("")
+            row.append(notes)
+            table.add_row(*row, style="dim")
+        elif r.pending:
+            notes = f"pending ({r.pending_status or 'Pending'})"
+            if r.pending_request_id:
+                notes += f" request_id={r.pending_request_id}"
+            row = [r.entity_id, r.ena_accession, ""]
+            if update_ena:
+                row.append("")
+            row.append(notes)
+            table.add_row(*row, style="yellow")
+        elif r.error:
+            row = [r.entity_id, r.ena_accession, f"[red]{r.error}[/red]"]
+            if update_ena:
+                row.append("[red]no[/red]")
+            row.append("")
+            table.add_row(*row)
+        else:
+            row = [r.entity_id, r.ena_accession, r.tolid or ""]
+            if update_ena:
+                row.append("[green]yes[/green]" if r.ena_updated else "[yellow]failed[/yellow]")
+            row.append("")
+            table.add_row(*row)
+
+    console.print(table)
 
 
 # ---------------------------------------------------------------------------

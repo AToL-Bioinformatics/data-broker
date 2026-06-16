@@ -66,7 +66,8 @@ _REQUIRED_SAMPLE_ATTRIBUTES: dict[str, str] = {
     "habitat": "missing:not provided",
     "sex": "missing:not provided",
     # TODO fix below, temp fix setting to Autrtalia for now to unblock ATOL testing — we need to update the test data and then remove this default
-    "geographic location (country and/or sea)": "Australia",
+    "collection method": "missing:not provided",
+    "geographic location (country and/or sea)": "missing:not provided",
     "collecting institution": "missing:not provided",
 }
 

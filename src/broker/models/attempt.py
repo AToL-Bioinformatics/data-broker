@@ -43,6 +43,8 @@ class EntitySubmissionState(BaseModel):
 
     # Tree of Life ID — populated after a successful ToLID request (samples only)
     tolid: str | None = None
+    tolid_request_id: str | None = None
+    tolid_status: str | None = None
 
     # Error tracking
     error_message: str | None = None

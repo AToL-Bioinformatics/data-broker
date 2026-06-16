@@ -14,6 +14,9 @@ after the full run completes, so that Canopy always receives a complete picture
 regardless of whether any entity failed or the process was interrupted.
 
 Dry-run mode skips steps 3-6 and marks the entity SKIPPED after step 2.
+
+ToLID requests are NOT part of this lifecycle.  They are handled separately
+by ToLIDService, invoked via ``broker tolid request`` after submission.
 """
 
 from __future__ import annotations
@@ -21,8 +24,8 @@ from __future__ import annotations
 import logging
 
 from broker.clients.ena import ENAClient
-from broker.clients.tolid import ToLIDClient
-from broker.enums import EntitySubmissionStatus, EntityType, SubmissionMode
+from broker.enums import EntityType, SubmissionMode
+from broker.errors import PrerequisiteMissingError
 from broker.models.attempt import AttemptState, EntitySubmissionState
 from broker.services.prerequisite_validation import PrerequisiteValidator
 from broker.services.receipt_parser import ReceiptParser
@@ -45,7 +48,6 @@ class SubmissionService:
         receipt_parser: ReceiptParser,
         state_store: StateStore,
         receipt_store: ReceiptStore,
-        tolid_client: ToLIDClient | None = None,
     ) -> None:
         self._ena = ena_client
         self._transform = transform_service
@@ -53,7 +55,6 @@ class SubmissionService:
         self._receipt_parser = receipt_parser
         self._state_store = state_store
         self._receipt_store = receipt_store
-        self._tolid_client = tolid_client
 
     def submit_entity(
         self,
@@ -116,10 +117,22 @@ class SubmissionService:
 
         # Step 4: POST to ENA — never raises
         logger.info("Submitting %s %s to ENA", entity.entity_type, entity.entity_id)
+        logger.debug(
+            "Submission XML for %s %s:\n%s",
+            entity.entity_type,
+            entity.entity_id,
+            submission_xml,
+        )
+        logger.debug(
+            "Entity XML for %s %s:\n%s",
+            entity.entity_type,
+            entity.entity_id,
+            entity_xml,
+        )
         result = self._dispatch_to_ena(entity, submission_xml, entity_xml)
 
         # Step 5: Persist raw receipt verbatim
-        receipt_path = self._receipt_store.save(
+        self._receipt_store.save(
             attempt_id=attempt_state.attempt_id,
             entity_type=entity.entity_type,
             entity_id=entity.entity_id,
@@ -149,97 +162,7 @@ class SubmissionService:
             )
 
         self._state_store.save(attempt_state)
-
-        # Step 7 (samples only): Request a Tree of Life ID using the ENA accession.
-        # Fire-and-forget — a ToLID failure never fails the submission.
-        if (
-            entity.status == EntitySubmissionStatus.SUCCEEDED
-            and entity.entity_type == EntityType.SAMPLE
-            and self._tolid_client is not None
-            and entity.ena_accession
-        ):
-            self._request_tolid(entity, attempt_state)
-
         return entity
-
-    def _request_tolid(
-        self,
-        entity: EntitySubmissionState,
-        attempt_state: AttemptState,
-    ) -> None:
-        """Request a ToLID then submit a MODIFY to ENA to record it on the sample.
-
-        Flow:
-          1. POST to ToLID service → get tolid string
-          2. Store tolid on entity + save state
-          3. Build SAMPLE_SET (full record + tolid attribute) with MODIFY action
-          4. POST to ENA — never raises; failures are logged and ignored
-
-        A failure at any step is fire-and-forget: the original sample
-        submission is already SUCCEEDED and is not affected.
-        """
-        tax_id = entity.raw_payload.get("tax_id", "")
-        scientific_name = entity.raw_payload.get("scientific_name")
-
-        logger.info(
-            "Requesting ToLID for sample %s (specimen_id=%s)",
-            entity.entity_id,
-            entity.ena_accession,
-        )
-        tolid = self._tolid_client.request_tolid(
-            specimen_id=entity.ena_accession,
-            taxonomy_id=tax_id,
-            confirmation_name=scientific_name,
-        )
-
-        if not tolid:
-            logger.warning(
-                "No ToLID returned for sample %s (specimen_id=%s) — skipping ENA update",
-                entity.entity_id,
-                entity.ena_accession,
-            )
-            return
-
-        # Persist tolid before the ENA MODIFY so a crash here doesn't lose it
-        entity.tolid = tolid
-        logger.info("ToLID assigned for sample %s: %s", entity.entity_id, tolid)
-        self._state_store.save(attempt_state)
-
-        # Build the MODIFY payload — full sample record with tolid attribute added
-        from broker.models.canopy import CanopyEntityPayload
-
-        payload = CanopyEntityPayload(
-            entity_id=entity.entity_id,
-            entity_type=entity.entity_type,
-            data=entity.raw_payload,
-        )
-        sample_xml = self._transform.to_sample_modify_xml(
-            payload=payload,
-            ena_accession=entity.ena_accession,
-            tolid=tolid,
-        )
-        submission_xml = self._transform.build_submission_xml(action="MODIFY")
-
-        logger.info(
-            "Submitting MODIFY to ENA for sample %s to record ToLID %s",
-            entity.entity_id,
-            tolid,
-        )
-        result = self._ena.submit_sample(entity.entity_id, submission_xml, sample_xml)
-
-        if result.success:
-            logger.info(
-                "ENA MODIFY succeeded for sample %s (ToLID: %s)",
-                entity.entity_id,
-                tolid,
-            )
-        else:
-            logger.warning(
-                "ENA MODIFY failed for sample %s (ToLID: %s) — %s",
-                entity.entity_id,
-                tolid,
-                result.error_message or "no detail",
-            )
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -249,7 +172,6 @@ class SubmissionService:
         self, entity: EntitySubmissionState, attempt_state: AttemptState
     ) -> str:
         """Route to the correct TransformService method based on entity type."""
-        # Re-hydrate a CanopyEntityPayload-like object from stored raw_payload + state
         from broker.models.canopy import CanopyEntityPayload
 
         payload = CanopyEntityPayload(
@@ -266,21 +188,40 @@ class SubmissionService:
         elif entity.entity_type == EntityType.SAMPLE:
             return self._transform.to_sample_xml(payload)
         elif entity.entity_type == EntityType.EXPERIMENT:
-            assert entity.project_accession, "project_accession must be resolved before transform"
-            assert entity.sample_accession, "sample_accession must be resolved before transform"
+            self._require_resolved_accessions(
+                entity,
+                required_fields=["project_accession", "sample_accession"],
+            )
             return self._transform.to_experiment_xml(
                 payload,
                 project_accession=entity.project_accession,
                 sample_accession=entity.sample_accession,
             )
         elif entity.entity_type == EntityType.RUN:
-            assert entity.experiment_accession, "experiment_accession must be resolved before transform"
+            self._require_resolved_accessions(
+                entity,
+                required_fields=["experiment_accession"],
+            )
             return self._transform.to_run_xml(
                 payload,
                 experiment_accession=entity.experiment_accession,
             )
         else:
             raise ValueError(f"Unknown entity type: {entity.entity_type}")
+
+    @staticmethod
+    def _require_resolved_accessions(
+        entity: EntitySubmissionState,
+        required_fields: list[str],
+    ) -> None:
+        """Fail explicitly if prerequisite resolution did not populate required accessions."""
+        missing = [field for field in required_fields if not getattr(entity, field)]
+        if missing:
+            raise PrerequisiteMissingError(
+                entity_type=str(entity.entity_type),
+                entity_id=entity.entity_id,
+                missing=missing,
+            )
 
     def _dispatch_to_ena(
         self,

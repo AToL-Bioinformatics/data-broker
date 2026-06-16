@@ -217,6 +217,64 @@ def test_prerequisite_missing_does_not_save_state():
     mocks["ena_client"].submit_sample.assert_not_called()
 
 
+def test_experiment_missing_resolved_accessions_raises_explicit_error():
+    """Guard against prerequisite resolver regressions without relying on assert."""
+    svc, mocks = make_service()
+    attempt = make_attempt()
+    entity = EntitySubmissionState(
+        entity_id="x1",
+        entity_type=EntityType.EXPERIMENT,
+        raw_payload={
+            "title": "T",
+            "library_strategy": "WGS",
+            "library_source": "GENOMIC",
+            "library_selection": "RANDOM",
+            "library_layout": "PAIRED",
+            "platform": "ILLUMINA",
+            "instrument_model": "HiSeq",
+        },
+        sample_accession="ERS1",
+    )
+    attempt.entities[EntityType.EXPERIMENT].append(entity)
+
+    with pytest.raises(PrerequisiteMissingError) as exc_info:
+        svc.submit_entity(entity, attempt)
+
+    assert exc_info.value.missing == ["project_accession"]
+    mocks["state_store"].save.assert_called_once_with(attempt)
+    mocks["transform"].to_experiment_xml.assert_not_called()
+    mocks["ena_client"].submit_experiment.assert_not_called()
+
+
+def test_run_missing_resolved_accession_raises_explicit_error():
+    """Run submissions must fail clearly if experiment_accession is still absent."""
+    svc, mocks = make_service()
+    attempt = make_attempt()
+    entity = EntitySubmissionState(
+        entity_id="r1",
+        entity_type=EntityType.RUN,
+        raw_payload={
+            "files": [
+                {
+                    "filename": "reads.fastq.gz",
+                    "filetype": "fastq",
+                    "checksum": "abc123",
+                    "checksum_method": "MD5",
+                }
+            ]
+        },
+    )
+    attempt.entities[EntityType.RUN].append(entity)
+
+    with pytest.raises(PrerequisiteMissingError) as exc_info:
+        svc.submit_entity(entity, attempt)
+
+    assert exc_info.value.missing == ["experiment_accession"]
+    mocks["state_store"].save.assert_called_once_with(attempt)
+    mocks["transform"].to_run_xml.assert_not_called()
+    mocks["ena_client"].submit_run.assert_not_called()
+
+
 # ---------------------------------------------------------------------------
 # Dry-run mode
 # ---------------------------------------------------------------------------

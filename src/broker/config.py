@@ -18,7 +18,7 @@ Optional variables (defaults shown):
 
 ToLID (optional — ToLID requests are skipped when TOLID_API_KEY is not set):
   TOLID_API_KEY       API key for the Sanger Tree of Life ID service
-  TOLID_BASE_URL      ToLID service base URL (https://id.tol.sanger.ac.uk)
+  TOLID_BASE_URL      ToLID service base URL (defaults to staging)
 """
 
 from __future__ import annotations
@@ -66,7 +66,9 @@ class BrokerSettings(BaseSettings):
     # ToLID — optional; skip ToLID requests when api key is absent
     tolid_api_key: str | None = Field(default=None, alias="TOLID_API_KEY")
     tolid_base_url: str = Field(
-        default="https://id.tol.sanger.ac.uk",
+        # default="https://id.tol.sanger.ac.uk",
+        # TODO tolid server as ENV variable
+        default="https://id-staging.tol.sanger.ac.uk",
         alias="TOLID_BASE_URL",
     )
 

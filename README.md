@@ -14,6 +14,8 @@ A Python CLI tool that fetches submission-ready genomic metadata from the Canopy
   - [submit entity — single entity by type and ID](#submit-entity)
   - [submit batch — specific entities by ID](#submit-batch)
   - [resume — continue an interrupted attempt](#resume)
+  - [tolid request — assign Tree of Life IDs to samples](#tolid-request)
+- [CLI execution flow](#cli-execution-flow)
 - [Prerequisite accessions](#prerequisite-accessions)
 - [Hold dates](#hold-dates)
 - [Dry run and validate-only](#dry-run-and-validate-only)
@@ -34,7 +36,7 @@ A Python CLI tool that fetches submission-ready genomic metadata from the Canopy
 - **Resume** — re-submits non-terminal entities from persisted state without re-calling Canopy
 - **Canopy reporting** — every entity outcome is reported back to Canopy (`/reports/{attempt_id}`) after submission
 - **Hold dates** — ENA embargo date on projects and samples via `--hold-until`
-- **Dry run / validate-only** modes for safe pre-flight checks
+- **Dry run** mode for safe pre-flight checks
 
 ---
 
@@ -76,6 +78,8 @@ cp .env.example .env
 | `HTTP_MAX_RETRIES` | | `3` | Retries on transient transport errors |
 | `HTTP_RETRY_MIN_WAIT` | | `1.0` | Min seconds between retries |
 | `HTTP_RETRY_MAX_WAIT` | | `30.0` | Max seconds between retries |
+| `TOLID_API_KEY` | | — | API key for the Sanger ToLID service |
+| `TOLID_BASE_URL` | | staging server | ToLID API base URL |
 
 **ENA environments:**
 
@@ -88,6 +92,16 @@ ENA_BASE_URL=https://www.ebi.ac.uk/ena/submit/drop-box/submit/
 ```
 
 The default is the **dev server**. Switch to production intentionally.
+
+**ToLID environments:**
+
+```bash
+# Staging server — use this for testing
+TOLID_BASE_URL=https://id-staging.tol.sanger.ac.uk
+
+# Production
+# TOLID_BASE_URL=https://id.tol.sanger.ac.uk
+```
 
 ---
 
@@ -127,7 +141,7 @@ Valid `--only` values: `projects`, `samples`, `experiments`, `runs`.
 | `--sample-accession` | Override or supply sample accession |
 | `--experiment-accession` | Override or supply experiment accession |
 | `--dry-run` | Build XML but do not call ENA |
-| `--validate-only` | Run Canopy validation checks only; no XML or ENA call |
+| `--validate-only` | Reserved for a validation-only flow; see note below about current implementation status |
 
 ---
 
@@ -246,6 +260,114 @@ ENA Webin is idempotent on submission alias — re-posting an entity that was al
 
 ---
 
+### `tolid request`
+
+Request Tree of Life IDs for specimen samples from a saved attempt.
+
+```bash
+broker tolid request --attempt-id <uuid>
+
+# Fetch ToLIDs but do not send MODIFY submissions back to ENA
+broker tolid request --attempt-id <uuid> --no-update-ena
+```
+
+Only samples with `kind=specimen` in their saved raw payload are eligible. Samples that already have a `tolid`, or samples that never reached a successful ENA submission, are skipped automatically.
+
+If the ToLID API returns an immediate specimen record, the ToLID is stored right away. If the API returns a pending request instead, the broker stores the ToLID request ID in local state and a later `broker tolid request` run will poll that request instead of creating a duplicate.
+
+**All flags:**
+
+| Flag | Description |
+|---|---|
+| `--attempt-id` | Attempt ID whose specimen samples should be processed |
+| `--update-ena / --no-update-ena` | Whether to send an ENA `MODIFY` after each successful ToLID request |
+
+---
+
+## CLI Execution Flow
+
+The sections below describe what each CLI command actually does internally, in order.
+
+### `broker submit ready`
+
+1. Parse CLI flags and validate `--hold-until`, `--only`, and submission mode.
+2. Build clients and services from `.env` / environment settings.
+3. Call `CanopyClient.claim_by_tax_id()` to claim all ready entities for the taxonomy ID.
+4. Translate the Canopy claim response into an `AttemptState`, grouped by entity type.
+5. Persist the initial attempt JSON to the state store.
+6. Iterate entities in dependency order: `project -> sample -> experiment -> run`.
+7. For each entity:
+   - resolve prerequisite accessions from CLI overrides, Canopy payload, and optionally prior succeeded entities in the same attempt
+   - mark the entity `SUBMITTED` and save state
+   - in `--dry-run`, mark it `SKIPPED` and stop there
+   - otherwise build ENA XML, submit to ENA, save the raw receipt, then mark `SUCCEEDED` or `FAILED`
+8. After iteration finishes or aborts, batch-report entity outcomes back to Canopy and finalise the claim lease.
+9. Recompute overall attempt status, save the final state, render the Rich table, and exit non-zero on `failed` or `partial`.
+
+`--only` changes step 3 and step 7:
+- only the requested entity type is claimed from Canopy
+- state fallback for prerequisites is disabled, so dependencies must already be in the payload or provided via flags
+
+### `broker submit entity`
+
+1. Parse `--type`, `--id`, and any accession override flags.
+2. Build clients and services from settings.
+3. Call `CanopyClient.claim_entity()` for the specific entity.
+4. Build and save a targeted-mode `AttemptState`.
+5. Submit the claimed entity through the same per-entity lifecycle as `submit ready`.
+6. Report the outcome to Canopy, finalise the claim, save final state, render the result table, and exit non-zero on failure.
+
+Key difference from `submit ready`: state fallback is always disabled. Missing prerequisites must come from the claimed payload or explicit CLI flags.
+
+### `broker submit batch`
+
+1. Parse inline `--projects`, `--samples`, `--experiments`, `--runs`, plus optional `--from-file`.
+2. Merge file-based IDs with inline IDs and de-duplicate them.
+3. Reject the command if no IDs remain after parsing.
+4. Build clients and services from settings.
+5. Call `CanopyClient.claim_batch()` with the selected IDs.
+6. Build and save a targeted-mode `AttemptState` containing all claimed entities.
+7. Submit each claimed entity through the same per-entity lifecycle used by the other submission commands.
+8. Report outcomes to Canopy, finalise the claim, save final state, render the result table, and exit non-zero on failure.
+
+Like `submit entity`, batch mode disables state fallback. Prerequisites must already exist in the payload or be supplied via CLI flags.
+
+### `broker resume`
+
+1. Parse `--attempt-id` and any new accession override flags.
+2. Load broker settings and open the local state store.
+3. Load the saved `AttemptState` JSON from disk. Canopy is not queried again.
+4. If the attempt is already `COMPLETED`, render the saved result and exit.
+5. Determine whether state fallback is allowed from the original attempt mode:
+   - bulk attempts allow state fallback
+   - targeted and batch attempts do not
+6. Revisit entities in canonical dependency order and skip terminal ones (`SUCCEEDED`, `SKIPPED`).
+7. Re-submit every non-terminal entity through the same submission lifecycle used in a normal run.
+8. Report all reportable entity outcomes to Canopy, including entities that were already terminal before resume started.
+9. Finalise the claim, recompute attempt status, save state, render results, and exit non-zero on failure.
+
+### `broker tolid request`
+
+1. Parse `--attempt-id` and whether ENA should be updated afterward.
+2. Load broker settings and the saved attempt state from disk.
+3. Build the ToLID service and verify `TOLID_API_KEY` is configured.
+4. Iterate sample entities from the saved attempt.
+5. For each sample:
+   - skip it unless the sample succeeded in ENA and has an ENA accession
+   - skip it unless `raw_payload["kind"] == "specimen"`
+   - skip it if a `tolid` is already stored in state
+   - if the sample already has a pending ToLID request ID, poll that request
+   - otherwise create a new ToLID request using the ENA sample accession
+   - if the API returns a pending request, save its request ID and status back into state
+   - if the API returns a specimen record, save the assigned `tolid` back into the attempt state
+   - optionally send an ENA `MODIFY` submission that adds the `tolid` sample attribute
+6. Render a ToLID results table summarizing assigned IDs, skipped samples, and ENA update status.
+7. Exit non-zero if any ToLID request returned an error.
+
+Unlike the submission commands, `tolid request` does not re-open a Canopy claim and does not report back to Canopy. It is a post-processing step that operates entirely from saved local attempt state plus external ToLID / ENA calls.
+
+---
+
 ## Prerequisite accessions
 
 ENA submissions follow a strict dependency chain:
@@ -292,11 +414,15 @@ Format: `YYYY-MM-DD`. The hold date is stored in the attempt state file so `brok
 # Dry run — claims from Canopy, builds XML, but does NOT call ENA or report back
 broker submit ready --tax-id 9606 --dry-run
 
-# Validate only — runs Canopy validation checks, stops before XML is built
+# Validate only — accepted by the CLI, but not yet fully wired as a submission bypass
 broker submit ready --tax-id 9606 --validate-only
 ```
 
 `--dry-run` and `--validate-only` are mutually exclusive.
+
+Current behavior:
+- `--dry-run` checkpoints entities and skips the ENA POST.
+- `--validate-only` is accepted and converted into a submission mode value, but the submission path does not yet stop early on that mode. Do not rely on it as a true validation-only execution path until the implementation is completed.
 
 ---
 
