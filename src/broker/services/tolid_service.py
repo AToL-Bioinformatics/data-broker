@@ -2,7 +2,7 @@
 
 Flow:
   1. Ask Canopy for requestable or pending ToLID work items
-  2. POST each due item to the Sanger ToLID request/create endpoint
+  2. POST each item to the Sanger ToLID request/create endpoint
   3. Report assigned/pending/failed outcomes back to Canopy
   4. Optionally submit an ENA MODIFY to attach the tolid sample attribute
 
@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from broker.clients.canopy import CanopyClient
 from broker.clients.ena import ENAClient
@@ -51,13 +51,11 @@ class ToLIDService:
         tolid_client: ToLIDClient,
         ena_client: ENAClient,
         transform_service: TransformService,
-        retry_after_hours: float = 24.0,
     ) -> None:
         self._canopy = canopy_client
         self._tolid = tolid_client
         self._ena = ena_client
         self._transform = transform_service
-        self._retry_after = timedelta(hours=retry_after_hours)
 
     def process_requestable(
         self,
@@ -70,6 +68,13 @@ class ToLIDService:
             tax_id=tax_id,
             sample_id=sample_id,
             limit=limit,
+        )
+        logger.info(
+            "Canopy returned %d requestable ToLID row(s) (tax_id=%s, sample_id=%s, limit=%s)",
+            len(items),
+            tax_id,
+            sample_id,
+            limit,
         )
         return [self._process_one(item, update_ena=update_ena) for item in items]
 
@@ -86,27 +91,15 @@ class ToLIDService:
             sample_id=sample_id,
             limit=limit,
         )
+        logger.info(
+            "Canopy returned %d pending ToLID row(s) (tax_id=%s, sample_id=%s, limit=%s)",
+            len(items),
+            tax_id,
+            sample_id,
+            limit,
+        )
         poll_now = now or datetime.now(timezone.utc)
-        results: list[ToLIDResult] = []
-        for item in items:
-            if not self._is_due(item, poll_now):
-                results.append(
-                    ToLIDResult(
-                        sample_id=item.sample_id,
-                        specimen_id=item.specimen_id,
-                        status=item.status,
-                        request_id=item.request_id,
-                        skipped=True,
-                        note=(
-                            "not due until retry window elapses"
-                            if item.last_requested_at is not None
-                            else "missing last_requested_at"
-                        ),
-                    )
-                )
-                continue
-            results.append(self._process_one(item, update_ena=update_ena, now=poll_now))
-        return results
+        return [self._process_one(item, update_ena=update_ena, now=poll_now) for item in items]
 
     def _process_one(
         self,
@@ -210,11 +203,6 @@ class ToLIDService:
             taxonomy_id=item.tax_id,
             confirmation_name=item.scientific_name,
         )
-
-    def _is_due(self, item: ToLIDWorkItem, now: datetime) -> bool:
-        if item.last_requested_at is None:
-            return False
-        return item.last_requested_at + self._retry_after <= now
 
     def _update_ena(self, item: ToLIDWorkItem, tolid: str) -> bool:
         payload = self._load_sample_payload(item)

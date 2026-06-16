@@ -373,13 +373,6 @@ def tolid_poll(
         Optional[int],
         typer.Option("--limit", help="Optional maximum number of pending ToLIDs to poll"),
     ] = None,
-    retry_after_hours: Annotated[
-        Optional[float],
-        typer.Option(
-            "--retry-after-hours",
-            help="Minimum age in hours before retrying a pending ToLID",
-        ),
-    ] = None,
     update_ena: Annotated[
         bool,
         typer.Option(
@@ -392,14 +385,10 @@ def tolid_poll(
     ] = True,
 ) -> None:
     """Retry Tree of Life IDs for Canopy rows in `pending` state."""
-    from broker.config import get_settings
     from broker.errors import BrokerError
 
     try:
-        settings = get_settings()
-        tolid_svc = _build_tolid_service(
-            retry_after_hours=retry_after_hours or settings.tolid_retry_after_hours
-        )
+        tolid_svc = _build_tolid_service()
         results = tolid_svc.process_pending(
             tax_id=tax_id,
             sample_id=sample_id,
@@ -509,7 +498,7 @@ def _build_resume_service():
     )
 
 
-def _build_tolid_service(retry_after_hours: float | None = None):
+def _build_tolid_service():
     from broker.clients.canopy import CanopyClient
     from broker.clients.ena import ENAClient
     from broker.clients.tolid import ToLIDClient
@@ -534,7 +523,6 @@ def _build_tolid_service(retry_after_hours: float | None = None):
         ),
         ena_client=ENAClient(settings),
         transform_service=TransformService(webin_account=settings.webin_username),
-        retry_after_hours=retry_after_hours or settings.tolid_retry_after_hours,
     )
 
 
@@ -620,6 +608,8 @@ def _render_tolid_results(results, scope: str, update_ena: bool) -> None:
             table.add_row(*row)
 
     console.print(table)
+    if not results:
+        console.print("No ToLID rows were returned by Canopy for this command.")
 
 
 # ---------------------------------------------------------------------------

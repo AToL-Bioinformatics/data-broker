@@ -97,7 +97,13 @@ class ToLIDClient:
                     headers={"api-key": self._api_key},
                 )
             response.raise_for_status()
-            return self._extract_result(response.json(), specimen_id)
+            response_data = response.json()
+            logger.info(
+                "ToLID response for specimen %s: %s",
+                specimen_id,
+                response.text,
+            )
+            return self._extract_result(response_data, specimen_id)
         except httpx.HTTPStatusError as exc:
             body_preview = exc.response.text[:300]
             logger.warning(

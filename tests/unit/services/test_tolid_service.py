@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
 from broker.clients.tolid import ToLIDLookupResult
@@ -29,7 +29,7 @@ def make_item(**overrides) -> ToLIDWorkItem:
     return ToLIDWorkItem.model_validate(base)
 
 
-def make_service(retry_after_hours: float = 24.0) -> tuple[ToLIDService, dict[str, MagicMock]]:
+def make_service() -> tuple[ToLIDService, dict[str, MagicMock]]:
     mocks = {
         "canopy": MagicMock(),
         "tolid": MagicMock(),
@@ -41,7 +41,6 @@ def make_service(retry_after_hours: float = 24.0) -> tuple[ToLIDService, dict[st
         tolid_client=mocks["tolid"],
         ena_client=mocks["ena"],
         transform_service=mocks["transform"],
-        retry_after_hours=retry_after_hours,
     )
     return service, mocks
 
@@ -104,32 +103,37 @@ def test_process_requestable_error_does_not_persist_failed_status():
     mocks["canopy"].report_tolid.assert_not_called()
 
 
-def test_process_pending_skips_not_due_items():
-    service, mocks = make_service(retry_after_hours=24.0)
+def test_process_pending_retries_all_returned_pending_items():
+    service, mocks = make_service()
     now = datetime.now(timezone.utc)
     item = make_item(
         status="pending",
         request_id="10306",
-        last_requested_at=now - timedelta(hours=2),
+        last_requested_at=now,
     )
     mocks["canopy"].list_pending_tolids.return_value = [item]
+    mocks["tolid"].request_tolid.return_value = ToLIDLookupResult(
+        status="pending",
+        request_id="10306",
+        pending_status="Pending",
+    )
 
     results = service.process_pending(update_ena=False, now=now)
 
     assert len(results) == 1
-    assert results[0].skipped is True
+    assert results[0].skipped is False
     assert results[0].status == ToLIDStatus.PENDING
-    mocks["tolid"].request_tolid.assert_not_called()
-    mocks["canopy"].report_tolid.assert_not_called()
+    mocks["tolid"].request_tolid.assert_called_once()
+    mocks["canopy"].report_tolid.assert_called_once()
 
 
-def test_process_pending_retries_due_items():
-    service, mocks = make_service(retry_after_hours=24.0)
+def test_process_pending_reports_assignment():
+    service, mocks = make_service()
     now = datetime.now(timezone.utc)
     item = make_item(
         status="pending",
         request_id="10306",
-        last_requested_at=now - timedelta(hours=30),
+        last_requested_at=now,
     )
     mocks["canopy"].list_pending_tolids.return_value = [item]
     mocks["tolid"].request_tolid.return_value = ToLIDLookupResult(
