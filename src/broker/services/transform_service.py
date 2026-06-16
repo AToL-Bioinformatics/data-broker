@@ -40,8 +40,8 @@ from broker.errors import BrokerError
 # All of these must appear in every ENA sample submission.
 # - "project name" is always forced to the canonical ATOL value regardless of
 #   what Canopy sends.
-# - All other tags default to "missing:not provided" when absent from the
-#   Canopy payload, so that the submission is valid even when data is
+# - All other required tags default to ENA-safe sentinel values when absent
+#   from the Canopy payload, so that the submission is valid even when data is
 #   incomplete at the time of submission.
 # Required experiment library fields — substituted when absent from the payload.
 # library_layout is special: it becomes an XML element name (<PAIRED/> or <SINGLE/>),
@@ -58,16 +58,16 @@ _REQUIRED_EXPERIMENT_FIELDS: dict[str, str] = {
 
 _REQUIRED_SAMPLE_ATTRIBUTES: dict[str, str] = {
     "project name": "atol_genome_engine",
-    "lifestage": "missing:not provided",
-    "organism part": "missing:not provided",
-    "collected_by": "missing:not provided",
+    "lifestage": "not provided",
+    "organism part": "not provided",
+    "collected_by": "not provided",
     "collection date": "not provided",
-    "geographic location (region and locality)": "missing:not provided",
-    "habitat": "missing:not provided",
-    "sex": "missing:not provided",
-    "collection method": "missing:not provided",
+    "geographic location (region and locality)": "not provided",
+    "habitat": "not provided",
+    "sex": "not provided",
+    "collection method": "not provided",
     "geographic location (country and/or sea)": "not provided",
-    "collecting institution": "missing:not provided",
+    "collecting institution": "not provided",
 }
 
 _SAMPLE_ATTRIBUTE_FIELD_MAP: dict[str, str] = {
@@ -319,8 +319,8 @@ class TransformService:
         Rules:
         - ``project name`` is always forced to ``"atol_genome_engine"``
           regardless of what the Canopy payload contains.
-        - All other required tags are injected with ``"missing:not provided"``
-          only when absent — existing values are left untouched.
+        - All other required tags are injected with the configured ENA-safe
+          sentinel value only when absent — existing values are left untouched.
         - Tag matching is case-insensitive so "Lifestage" and "lifestage" are
           treated as the same tag.
         """

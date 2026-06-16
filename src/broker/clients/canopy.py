@@ -43,6 +43,9 @@ from broker.errors import CanopyError
 from broker.models.canopy import (
     ClaimResponse,
     ReportBatchPayload,
+    ToLIDListResponse,
+    ToLIDReportPayload,
+    ToLIDWorkItem,
     ValidationResponse,
 )
 
@@ -199,6 +202,43 @@ class CanopyClient:
             )
 
     # ------------------------------------------------------------------
+    # Public API — ToLID
+    # ------------------------------------------------------------------
+
+    def list_requestable_tolids(
+        self,
+        tax_id: str | None = None,
+        sample_id: str | None = None,
+        sample_ids: list[str] | None = None,
+        limit: int | None = None,
+    ) -> list[ToLIDWorkItem]:
+        resp = self._get(
+            "/broker/tolids/requestable",
+            params=self._tolid_query_params(tax_id, sample_id, sample_ids, limit),
+        )
+        return self._parse_tolid_list(resp.json())
+
+    def list_pending_tolids(
+        self,
+        tax_id: str | None = None,
+        sample_id: str | None = None,
+        sample_ids: list[str] | None = None,
+        limit: int | None = None,
+    ) -> list[ToLIDWorkItem]:
+        resp = self._get(
+            "/broker/tolids/pending",
+            params=self._tolid_query_params(tax_id, sample_id, sample_ids, limit),
+        )
+        return self._parse_tolid_list(resp.json())
+
+    def get_tolid(self, sample_id: str) -> ToLIDWorkItem:
+        resp = self._get(f"/broker/tolids/{sample_id}")
+        return ToLIDWorkItem.model_validate(resp.json())
+
+    def report_tolid(self, sample_id: str, payload: ToLIDReportPayload) -> None:
+        self._post(f"/broker/tolids/{sample_id}/report", json=payload.model_dump(mode="json"))
+
+    # ------------------------------------------------------------------
     # Auth: login and token refresh
     # ------------------------------------------------------------------
 
@@ -254,6 +294,9 @@ class CanopyClient:
     def _post(self, path: str, **kwargs: Any) -> httpx.Response:
         return self._authenticated_request("POST", f"{self._base_url}{path}", **kwargs)
 
+    def _get(self, path: str, **kwargs: Any) -> httpx.Response:
+        return self._authenticated_request("GET", f"{self._base_url}{path}", **kwargs)
+
     def _authenticated_request(self, method: str, url: str, **kwargs: Any) -> httpx.Response:
         self._ensure_authenticated()
         resp = self._raw_request(method, url, **kwargs)
@@ -285,3 +328,29 @@ class CanopyClient:
                 body=resp.text,
                 url=url,
             )
+
+    @staticmethod
+    def _tolid_query_params(
+        tax_id: str | None,
+        sample_id: str | None,
+        sample_ids: list[str] | None,
+        limit: int | None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {}
+        if tax_id:
+            params["taxon_id"] = tax_id
+        if sample_id:
+            params["sample_id"] = sample_id
+        if sample_ids:
+            params["sample_ids"] = sample_ids
+        if limit is not None:
+            params["limit"] = limit
+        return params
+
+    @staticmethod
+    def _parse_tolid_list(data: Any) -> list[ToLIDWorkItem]:
+        if isinstance(data, list):
+            return [ToLIDWorkItem.model_validate(item) for item in data]
+        if isinstance(data, dict) and isinstance(data.get("items"), list):
+            return ToLIDListResponse.model_validate(data).items
+        raise CanopyError(status_code=500, body=f"Unexpected ToLID list response: {data!r}")

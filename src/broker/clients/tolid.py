@@ -19,6 +19,9 @@ Observed response shapes:
          {
            "id": "mMacGis1",
            "type": "specimen",
+           "relationships": {
+             "species": { ... }
+           },
            ...
          }
        ]
@@ -115,56 +118,6 @@ class ToLIDClient:
             )
             return ToLIDLookupResult(status="error", error=str(exc))
 
-    def poll_tolid_request(self, request_id: str) -> ToLIDLookupResult:
-        """Poll an existing ToLID request until it resolves to a specimen or remains pending."""
-        candidate_urls = [
-            f"{self._base_url}/api/v3/request/{request_id}",
-            f"{self._base_url}/api/v3/requests/{request_id}",
-        ]
-
-        with httpx.Client(timeout=_TIMEOUT_SECONDS) as client:
-            for url in candidate_urls:
-                try:
-                    response = client.get(url, headers={"api-key": self._api_key})
-                    if response.status_code == 404:
-                        continue
-                    response.raise_for_status()
-                    return self._extract_result(
-                        response.json(),
-                        specimen_id=f"request:{request_id}",
-                    )
-                except httpx.HTTPStatusError as exc:
-                    body_preview = exc.response.text[:300]
-                    logger.warning(
-                        "ToLID poll failed for request %s: HTTP %s — %s",
-                        request_id,
-                        exc.response.status_code,
-                        body_preview,
-                    )
-                    return ToLIDLookupResult(
-                        status="error",
-                        request_id=request_id,
-                        error=f"HTTP {exc.response.status_code}: {body_preview}",
-                    )
-                except Exception as exc:
-                    logger.warning(
-                        "ToLID poll failed for request %s: %s",
-                        request_id,
-                        exc,
-                    )
-                    return ToLIDLookupResult(
-                        status="error",
-                        request_id=request_id,
-                        error=str(exc),
-                    )
-
-        logger.warning("ToLID poll failed for request %s: request not found", request_id)
-        return ToLIDLookupResult(
-            status="error",
-            request_id=request_id,
-            error="request not found",
-        )
-
     @staticmethod
     def _extract_result(data: Any, specimen_id: str) -> ToLIDLookupResult:
         """Parse both immediate-success and async-pending response shapes."""
@@ -186,15 +139,17 @@ class ToLIDClient:
         resource_type = first.get("type")
         resource_id = first.get("id")
         attributes = first.get("attributes", {}) if isinstance(first, dict) else {}
+        relationships = first.get("relationships", {}) if isinstance(first, dict) else {}
+        has_species = isinstance(relationships, dict) and "species" in relationships
 
-        if resource_type == "specimen" and resource_id:
+        if has_species and resource_id:
             return ToLIDLookupResult(
                 status="assigned",
                 tolid=str(resource_id),
             )
 
         pending_status = attributes.get("status")
-        if resource_type == "request" and pending_status:
+        if not has_species and pending_status == "Pending":
             return ToLIDLookupResult(
                 status="pending",
                 request_id=str(resource_id) if resource_id is not None else None,
@@ -202,8 +157,9 @@ class ToLIDClient:
             )
 
         logger.warning(
-            "Unrecognised ToLID response payload for specimen %s: %r",
+            "Unrecognised ToLID response payload for specimen %s (type=%r): %r",
             specimen_id,
+            resource_type,
             first,
         )
         return ToLIDLookupResult(status="error", error="unrecognised response payload")

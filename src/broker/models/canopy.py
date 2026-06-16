@@ -12,11 +12,12 @@ Endpoints:
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 from pydantic import AliasChoices, BaseModel, Field, field_validator
 
-from broker.enums import EntityType
+from broker.enums import EntityType, ToLIDStatus
 
 
 # ---------------------------------------------------------------------------
@@ -171,3 +172,37 @@ class ReportBatchPayload(BaseModel):
 
     tax_id: str | None = None
     results: list[ReportResult]
+
+
+# ---------------------------------------------------------------------------
+# ToLID broker API
+# ---------------------------------------------------------------------------
+
+
+class ToLIDWorkItem(BaseModel):
+    sample_id: str
+    specimen_id: str
+    tax_id: str = Field(validation_alias=AliasChoices("tax_id", "taxon_id"))
+    scientific_name: str | None = None
+    status: ToLIDStatus
+    request_id: str | None = None
+    tolid: str | None = None
+    last_requested_at: datetime | None = None
+    error_message: str | None = None
+    kind: str | None = None
+    sample_payload: dict[str, Any] | None = Field(
+        default=None,
+        validation_alias=AliasChoices("sample_payload", "payload"),
+    )
+
+
+class ToLIDListResponse(BaseModel):
+    items: list[ToLIDWorkItem] = Field(default_factory=list)
+
+
+class ToLIDReportPayload(BaseModel):
+    status: ToLIDStatus
+    tolid: str | None = None
+    request_id: str | None = None
+    last_requested_at: datetime | None = None
+    error_message: str | None = None

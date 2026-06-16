@@ -314,7 +314,18 @@ def resume(
 
 @tolid_app.command("request")
 def tolid_request(
-    attempt_id: Annotated[str, typer.Option("--attempt-id", help="Attempt ID whose specimen samples should be processed")],
+    tax_id: Annotated[
+        Optional[str],
+        typer.Option("--tax-id", help="Optional taxon filter for requestable ToLIDs"),
+    ] = None,
+    sample_id: Annotated[
+        Optional[str],
+        typer.Option("--sample-id", help="Optional Canopy sample ID to process"),
+    ] = None,
+    limit: Annotated[
+        Optional[int],
+        typer.Option("--limit", help="Optional maximum number of ToLIDs to request"),
+    ] = None,
     update_ena: Annotated[
         bool,
         typer.Option(
@@ -326,34 +337,77 @@ def tolid_request(
         ),
     ] = True,
 ) -> None:
-    """Request Tree of Life IDs for specimen samples from a completed attempt.
-
-    Only samples with ``kind=specimen`` in their payload are eligible.
-    Samples that already have a tolid stored are skipped automatically.
-
-    By default, a MODIFY submission is sent to ENA to record the tolid
-    attribute on the sample record.  Pass --no-update-ena to fetch ToLIDs
-    without touching ENA (useful for testing or if you want to apply them
-    separately).
-
-    \b
-    Examples:
-      broker tolid request --attempt-id abc-123
-      broker tolid request --attempt-id abc-123 --no-update-ena
-    """
+    """Request Tree of Life IDs for Canopy rows in `not_requested` state."""
     from broker.errors import BrokerError
-    from broker.storage.state_store import StateStore
+
+    try:
+        tolid_svc = _build_tolid_service()
+        results = tolid_svc.process_requestable(
+            tax_id=tax_id,
+            sample_id=sample_id,
+            limit=limit,
+            update_ena=update_ena,
+        )
+
+        _render_tolid_results(results, "requestable", update_ena)
+
+        if any(r.error for r in results):
+            raise typer.Exit(code=1)
+
+    except BrokerError as exc:
+        err_console.print(f"[ERROR] {exc}")
+        raise typer.Exit(code=1)
+
+
+@tolid_app.command("poll")
+def tolid_poll(
+    tax_id: Annotated[
+        Optional[str],
+        typer.Option("--tax-id", help="Optional taxon filter for pending ToLIDs"),
+    ] = None,
+    sample_id: Annotated[
+        Optional[str],
+        typer.Option("--sample-id", help="Optional Canopy sample ID to poll"),
+    ] = None,
+    limit: Annotated[
+        Optional[int],
+        typer.Option("--limit", help="Optional maximum number of pending ToLIDs to poll"),
+    ] = None,
+    retry_after_hours: Annotated[
+        Optional[float],
+        typer.Option(
+            "--retry-after-hours",
+            help="Minimum age in hours before retrying a pending ToLID",
+        ),
+    ] = None,
+    update_ena: Annotated[
+        bool,
+        typer.Option(
+            "--update-ena/--no-update-ena",
+            help=(
+                "Submit a MODIFY to ENA after each successful ToLID request "
+                "to record the tolid sample attribute (default: on)."
+            ),
+        ),
+    ] = True,
+) -> None:
+    """Retry Tree of Life IDs for Canopy rows in `pending` state."""
     from broker.config import get_settings
+    from broker.errors import BrokerError
 
     try:
         settings = get_settings()
-        state_store = StateStore(settings.state_dir)
-        attempt = state_store.load(attempt_id)
+        tolid_svc = _build_tolid_service(
+            retry_after_hours=retry_after_hours or settings.tolid_retry_after_hours
+        )
+        results = tolid_svc.process_pending(
+            tax_id=tax_id,
+            sample_id=sample_id,
+            limit=limit,
+            update_ena=update_ena,
+        )
 
-        tolid_svc = _build_tolid_service()
-        results = tolid_svc.process_attempt(attempt, update_ena=update_ena)
-
-        _render_tolid_results(results, attempt_id, update_ena)
+        _render_tolid_results(results, "pending", update_ena)
 
         if any(r.error for r in results):
             raise typer.Exit(code=1)
@@ -455,14 +509,14 @@ def _build_resume_service():
     )
 
 
-def _build_tolid_service():
+def _build_tolid_service(retry_after_hours: float | None = None):
+    from broker.clients.canopy import CanopyClient
     from broker.clients.ena import ENAClient
     from broker.clients.tolid import ToLIDClient
     from broker.config import get_settings
     from broker.errors import ConfigurationError
     from broker.services.tolid_service import ToLIDService
     from broker.services.transform_service import TransformService
-    from broker.storage.state_store import StateStore
 
     settings = get_settings()
 
@@ -473,13 +527,14 @@ def _build_tolid_service():
         )
 
     return ToLIDService(
+        canopy_client=CanopyClient(settings),
         tolid_client=ToLIDClient(
             api_key=settings.tolid_api_key,
             base_url=settings.tolid_base_url,
         ),
         ena_client=ENAClient(settings),
         transform_service=TransformService(webin_account=settings.webin_username),
-        state_store=StateStore(settings.state_dir),
+        retry_after_hours=retry_after_hours or settings.tolid_retry_after_hours,
     )
 
 
@@ -525,13 +580,14 @@ def _render_attempt(attempt) -> None:
     console.print(f"State saved to: ~/.broker/state/{attempt.attempt_id}.json")
 
 
-def _render_tolid_results(results, attempt_id: str, update_ena: bool) -> None:
+def _render_tolid_results(results, scope: str, update_ena: bool) -> None:
     """Render ToLID request outcomes as a Rich table."""
     from broker.services.tolid_service import ToLIDResult
 
-    table = Table(title=f"ToLID results — attempt {attempt_id}")
+    table = Table(title=f"ToLID results — {scope}")
     table.add_column("Sample ID", style="cyan")
-    table.add_column("ENA Accession", style="green")
+    table.add_column("Specimen ID", style="green")
+    table.add_column("Status")
     table.add_column("ToLID", style="green")
     if update_ena:
         table.add_column("ENA Updated")
@@ -539,33 +595,28 @@ def _render_tolid_results(results, attempt_id: str, update_ena: bool) -> None:
 
     for r in results:
         if r.skipped:
-            notes = r.skip_reason or "skipped"
-            tolid_cell = ""
-            row = [r.entity_id, r.ena_accession, tolid_cell]
+            row = [r.sample_id, r.specimen_id, str(r.status), r.tolid or ""]
             if update_ena:
                 row.append("")
-            row.append(notes)
+            row.append(r.note or "skipped")
             table.add_row(*row, style="dim")
-        elif r.pending:
-            notes = f"pending ({r.pending_status or 'Pending'})"
-            if r.pending_request_id:
-                notes += f" request_id={r.pending_request_id}"
-            row = [r.entity_id, r.ena_accession, ""]
-            if update_ena:
-                row.append("")
-            row.append(notes)
-            table.add_row(*row, style="yellow")
         elif r.error:
-            row = [r.entity_id, r.ena_accession, f"[red]{r.error}[/red]"]
+            row = [r.sample_id, r.specimen_id, str(r.status), ""]
             if update_ena:
                 row.append("[red]no[/red]")
-            row.append("")
+            row.append(r.error)
             table.add_row(*row)
         else:
-            row = [r.entity_id, r.ena_accession, r.tolid or ""]
+            row = [r.sample_id, r.specimen_id, str(r.status), r.tolid or ""]
             if update_ena:
-                row.append("[green]yes[/green]" if r.ena_updated else "[yellow]failed[/yellow]")
-            row.append("")
+                if r.status == "assigned":
+                    row.append("[green]yes[/green]" if r.ena_updated else "[yellow]failed[/yellow]")
+                else:
+                    row.append("")
+            notes = r.note or ""
+            if r.request_id:
+                notes = f"{notes} request_id={r.request_id}".strip()
+            row.append(notes)
             table.add_row(*row)
 
     console.print(table)

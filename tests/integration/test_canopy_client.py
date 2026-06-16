@@ -10,7 +10,12 @@ from broker.clients.canopy import CanopyClient
 from broker.config import BrokerSettings
 from broker.enums import EntityType
 from broker.errors import CanopyError
-from broker.models.canopy import ClaimResponse, ReportBatchPayload, ReportResult
+from broker.models.canopy import (
+    ClaimResponse,
+    ReportBatchPayload,
+    ReportResult,
+    ToLIDReportPayload,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -64,6 +69,20 @@ VALIDATION_RESPONSE = {
 }
 
 REPORT_RESPONSE = {"updated_count": 1}
+TOLID_LIST_RESPONSE = {
+    "items": [
+        {
+            "sample_id": "s1",
+            "specimen_id": "ERS123",
+            "taxon_id": "9606",
+            "scientific_name": "Homo sapiens",
+            "status": "pending",
+            "request_id": "10306",
+            "tolid": None,
+            "last_requested_at": "2026-06-15T12:00:00Z",
+        }
+    ]
+}
 
 
 def add_login_mock(httpx_mock) -> None:
@@ -439,6 +458,71 @@ def test_report_outcome_failure_does_not_raise(httpx_mock):
     )
     client = CanopyClient(make_settings())
     client.report_outcome("atm-1", make_report_payload("atm-1"))  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# ToLID endpoints
+# ---------------------------------------------------------------------------
+
+
+def test_list_requestable_tolids(httpx_mock):
+    add_login_mock(httpx_mock)
+    httpx_mock.add_response(
+        method="GET",
+        url="http://canopy.test/broker/tolids/requestable?taxon_id=9606&limit=10",
+        json=TOLID_LIST_RESPONSE,
+    )
+    client = CanopyClient(make_settings())
+    items = client.list_requestable_tolids(tax_id="9606", limit=10)
+    assert len(items) == 1
+    assert items[0].sample_id == "s1"
+    assert items[0].tax_id == "9606"
+
+
+def test_list_pending_tolids(httpx_mock):
+    add_login_mock(httpx_mock)
+    httpx_mock.add_response(
+        method="GET",
+        url="http://canopy.test/broker/tolids/pending?sample_id=s1",
+        json=TOLID_LIST_RESPONSE,
+    )
+    client = CanopyClient(make_settings())
+    items = client.list_pending_tolids(sample_id="s1")
+    assert len(items) == 1
+    assert items[0].request_id == "10306"
+
+
+def test_get_tolid(httpx_mock):
+    add_login_mock(httpx_mock)
+    httpx_mock.add_response(
+        method="GET",
+        url="http://canopy.test/broker/tolids/s1",
+        json=TOLID_LIST_RESPONSE["items"][0],
+    )
+    client = CanopyClient(make_settings())
+    item = client.get_tolid("s1")
+    assert item.sample_id == "s1"
+    assert item.specimen_id == "ERS123"
+
+
+def test_report_tolid(httpx_mock):
+    add_login_mock(httpx_mock)
+    httpx_mock.add_response(
+        method="POST",
+        url="http://canopy.test/broker/tolids/s1/report",
+        json={"ok": True},
+    )
+    client = CanopyClient(make_settings())
+    payload = ToLIDReportPayload(
+        status="pending",
+        request_id="10306",
+        last_requested_at="2026-06-16T00:00:00Z",
+    )
+    client.report_tolid("s1", payload)
+    req = [r for r in httpx_mock.get_requests() if "tolids/s1/report" in str(r.url)][0]
+    body = json.loads(req.content)
+    assert body["status"] == "pending"
+    assert body["request_id"] == "10306"
 
 
 # ---------------------------------------------------------------------------

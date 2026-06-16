@@ -245,19 +245,17 @@ def test_sample_missing_required_attributes_filled_with_defaults():
     attrs = root.findall("SAMPLE/SAMPLE_ATTRIBUTES/SAMPLE_ATTRIBUTE")
     tag_map = {a.find("TAG").text: a.find("VALUE").text for a in attrs}
 
-    # Tags that must be present and set to "missing:not provided"
     not_provided_tags = [
         "lifestage", "organism part", "collected_by",
         "geographic location (region and locality)", "habitat", "sex",
         "collection method", "collecting institution",
+        "collection date", "geographic location (country and/or sea)",
     ]
     for tag in not_provided_tags:
         assert tag in tag_map, f"Required attribute '{tag}' missing from XML"
-        assert tag_map[tag] == "missing:not provided", (
-            f"Expected 'missing:not provided' for '{tag}', got '{tag_map[tag]}'"
+        assert tag_map[tag] == "not provided", (
+            f"Expected 'not provided' for '{tag}', got '{tag_map[tag]}'"
         )
-    assert tag_map["collection date"] == "not provided"
-    assert tag_map["geographic location (country and/or sea)"] == "not provided"
 
 
 def test_sample_project_name_always_atol_genome_engine():

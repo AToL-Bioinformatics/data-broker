@@ -42,3 +42,10 @@ class SubmissionMode(StrEnum):
     NORMAL = "normal"
     DRY_RUN = "dry_run"
     VALIDATE_ONLY = "validate_only"
+
+
+class ToLIDStatus(StrEnum):
+    NOT_REQUESTED = "not_requested"
+    PENDING = "pending"
+    ASSIGNED = "assigned"
+    FAILED = "failed"
