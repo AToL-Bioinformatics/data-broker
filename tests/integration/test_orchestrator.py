@@ -144,6 +144,27 @@ def test_entity_payload_fields_not_overwritten(tmp_state_store):
     assert sample_entity.raw_payload["scientific_name"] == "Mus musculus"
 
 
+def test_claim_level_tax_id_merged_into_raw_payload_when_entity_tax_id_missing(tmp_state_store):
+    """Bulk tax_id must backfill sample payloads when entity-level tax_id is absent."""
+    entity = CanopyEntity(
+        type=EntityType.SAMPLE,
+        id="s3",
+        scientific_name="Homo sapiens",
+        payload={"title": "Homo sapiens blood"},
+    )
+    claim = ClaimResponse(attempt_id="atm-tx3", tax_id="9606", entities=[entity])
+    canopy = MagicMock()
+    canopy.claim_by_tax_id.return_value = claim
+    submission_svc = make_mock_submission_service()
+
+    orchestrator = make_orchestrator(canopy, submission_svc, tmp_state_store)
+    attempt = orchestrator.run_bulk("9606", only=None, submission_mode=SubmissionMode.NORMAL)
+
+    sample_entity = attempt.entities[EntityType.SAMPLE][0]
+    assert sample_entity.raw_payload["tax_id"] == "9606"
+    assert sample_entity.raw_payload["scientific_name"] == "Homo sapiens"
+
+
 # ---------------------------------------------------------------------------
 # Bulk submission — ordering
 # ---------------------------------------------------------------------------

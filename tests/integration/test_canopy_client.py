@@ -218,8 +218,36 @@ def test_claim_by_tax_id_success(httpx_mock):
     client = CanopyClient(make_settings())
     result = client.claim_by_tax_id("9606")
     assert isinstance(result, ClaimResponse)
-    assert result.attempt_id == "atm-123"
-    assert result.entities[0].id == "p1"
+
+
+def test_claim_by_tax_id_accepts_taxon_id_alias_in_response(httpx_mock):
+    add_login_mock(httpx_mock)
+    httpx_mock.add_response(
+        method="POST",
+        url="http://canopy.test/broker/claims/ready",
+        json={
+            "attempt_id": "atm-124",
+            "taxon_id": "9606",
+            "scope": "full",
+            "entities": [
+                {
+                    "type": "sample",
+                    "id": "s1",
+                    "taxon_id": "9606",
+                    "scientific_name": "Homo sapiens",
+                    "payload": {"title": "Sample"},
+                    "prerequisites": None,
+                    "files": [],
+                }
+            ],
+        },
+    )
+    client = CanopyClient(make_settings())
+    result = client.claim_by_tax_id("9606")
+    assert result.tax_id == "9606"
+    assert result.entities[0].tax_id == "9606"
+    assert result.attempt_id == "atm-124"
+    assert result.entities[0].id == "s1"
 
 
 def test_claim_by_tax_id_body_contains_tax_id(httpx_mock):

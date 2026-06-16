@@ -258,12 +258,13 @@ class Orchestrator:
         )
         for ce in claim.entities:
             p = ce.prerequisites
-            # tax_id and scientific_name are returned at entity root level by
-            # Canopy, not inside payload.  Merge them in so TransformService
-            # can find them when building sample XML.  Payload values win if
-            # already present (explicit payload takes precedence over root).
+            # tax_id / scientific_name may be returned at entity root level,
+            # claim root level, or only implied by the bulk request tax_id.
+            # Merge the best available values into raw_payload so downstream
+            # XML builders do not depend on one specific Canopy response shape.
             raw_payload = dict(ce.payload)
-            for field, value in (("tax_id", ce.tax_id), ("scientific_name", ce.scientific_name)):
+            resolved_tax_id = ce.tax_id or claim.tax_id or tax_id
+            for field, value in (("tax_id", resolved_tax_id), ("scientific_name", ce.scientific_name)):
                 if value and field not in raw_payload:
                     raw_payload[field] = value
 

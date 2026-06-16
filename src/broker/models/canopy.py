@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import AliasChoices, BaseModel, Field, field_validator
 
 from broker.enums import EntityType
 
@@ -66,7 +66,10 @@ class CanopyEntity(BaseModel):
 
     type: EntityType
     id: str
-    tax_id: str | None = None
+    tax_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("tax_id", "taxon_id"),
+    )
     scientific_name: str | None = None
     payload: dict[str, Any]
     prerequisites: CanopyEntityPrerequisites | None = None
@@ -87,7 +90,10 @@ class ClaimResponse(BaseModel):
     """
 
     attempt_id: str | None
-    tax_id: str | None = None
+    tax_id: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("tax_id", "taxon_id"),
+    )
     scope: str | None = None
     entities: list[CanopyEntity] = Field(default_factory=list)
 

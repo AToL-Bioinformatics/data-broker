@@ -197,7 +197,7 @@ class ToLIDService:
             )
             return self._tolid.poll_tolid_request(entity.tolid_request_id)
 
-        tax_id = entity.raw_payload.get("tax_id", "")
+        tax_id = entity.raw_payload.get("tax_id") or entity.raw_payload.get("taxon_id", "")
         scientific_name = entity.raw_payload.get("scientific_name")
 
         logger.info(

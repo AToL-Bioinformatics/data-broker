@@ -226,10 +226,19 @@ class SubmissionService:
         """Route to the correct TransformService method based on entity type."""
         from broker.models.canopy import CanopyEntityPayload
 
+        raw_payload = dict(entity.raw_payload)
+        if (
+            entity.entity_type == EntityType.SAMPLE
+            and "tax_id" not in raw_payload
+            and "taxon_id" not in raw_payload
+            and attempt_state.tax_id
+        ):
+            raw_payload["tax_id"] = attempt_state.tax_id
+
         payload = CanopyEntityPayload(
             entity_id=entity.entity_id,
             entity_type=entity.entity_type,
-            data=entity.raw_payload,
+            data=raw_payload,
             project_accession=entity.project_accession,
             sample_accession=entity.sample_accession,
             experiment_accession=entity.experiment_accession,

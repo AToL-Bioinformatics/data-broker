@@ -46,6 +46,7 @@ from broker.errors import BrokerError
 # Required experiment library fields — substituted when absent from the payload.
 # library_layout is special: it becomes an XML element name (<PAIRED/> or <SINGLE/>),
 # so "missing:not provided" would be an invalid tag — default to PAIRED instead.
+# # TODO default to PAIRED is not safe
 _REQUIRED_EXPERIMENT_FIELDS: dict[str, str] = {
     "library_name": "missing:not provided",
     "library_strategy": "missing:not provided",
@@ -60,15 +61,27 @@ _REQUIRED_SAMPLE_ATTRIBUTES: dict[str, str] = {
     "lifestage": "missing:not provided",
     "organism part": "missing:not provided",
     "collected_by": "missing:not provided",
-    # TODO handle missing "collection date" - temp fix for testing
-    "collection date": "2026-01-01",
+    "collection date": "not provided",
     "geographic location (region and locality)": "missing:not provided",
     "habitat": "missing:not provided",
     "sex": "missing:not provided",
-    # TODO fix below, temp fix setting to Autrtalia for now to unblock ATOL testing — we need to update the test data and then remove this default
     "collection method": "missing:not provided",
-    "geographic location (country and/or sea)": "missing:not provided",
+    "geographic location (country and/or sea)": "not provided",
     "collecting institution": "missing:not provided",
+}
+
+_SAMPLE_ATTRIBUTE_FIELD_MAP: dict[str, str] = {
+    "lifestage": "lifestage",
+    "organism part": "organism part",
+    "collected_by": "collected_by",
+    "collection date": "collection date",
+    "geographic location (region and locality)": "geographic location (region and locality)",
+    "habitat": "habitat",
+    "sex": "sex",
+    "sample collection method": "collection method",
+    "collection method": "collection method",
+    "geographic location (country and/or sea)": "geographic location (country and/or sea)",
+    "collecting institution": "collecting institution",
 }
 
 
@@ -244,12 +257,15 @@ class TransformService:
         sample = etree.Element("SAMPLE", alias=alias, center_name=self._center_name)
         self._required_sub(sample, "TITLE", data, "title", payload)
         name = etree.SubElement(sample, "SAMPLE_NAME")
-        self._required_sub(name, "TAXON_ID", data, "tax_id", payload)
+        taxon_id = self._require_first_field(data, ("tax_id", "taxon_id"), payload)
+        etree.SubElement(name, "TAXON_ID").text = taxon_id
         self._required_sub(name, "SCIENTIFIC_NAME", data, "scientific_name", payload)
         common = data.get("common_name")
         if common:
             etree.SubElement(name, "COMMON_NAME").text = str(common)
-        attrs = self._apply_required_sample_attributes(data.get("sample_attributes", []))
+        attrs = self._apply_required_sample_attributes(
+            self._normalise_sample_attributes(data)
+        )
         if attrs:
             attrs_el = etree.SubElement(sample, "SAMPLE_ATTRIBUTES")
             for attr in attrs:
@@ -272,6 +288,29 @@ class TransformService:
         if val:
             return str(val)
         return _REQUIRED_EXPERIMENT_FIELDS.get(field, "")
+
+    @staticmethod
+    def _normalise_sample_attributes(data: dict) -> list[dict]:
+        """Merge structured sample_attributes with flat Canopy sample fields."""
+        attrs = list(data.get("sample_attributes", []))
+        tag_index: dict[str, int] = {
+            str(a.get("tag", "")).lower(): i for i, a in enumerate(attrs)
+        }
+
+        for source_field, target_tag in _SAMPLE_ATTRIBUTE_FIELD_MAP.items():
+            value = data.get(source_field)
+            if value in (None, ""):
+                continue
+            idx = tag_index.get(target_tag.lower())
+            if idx is not None:
+                existing = attrs[idx]
+                if existing.get("value") in (None, ""):
+                    attrs[idx] = {**existing, "tag": target_tag, "value": value}
+            else:
+                attrs.append({"tag": target_tag, "value": value})
+                tag_index[target_tag.lower()] = len(attrs) - 1
+
+        return attrs
 
     @staticmethod
     def _apply_required_sample_attributes(attrs: list[dict]) -> list[dict]:
@@ -328,6 +367,22 @@ class TransformService:
                 f"'{field}' is missing from payload data."
             )
         return str(val)
+
+    @staticmethod
+    def _require_first_field(
+        data: dict,
+        fields: tuple[str, ...],
+        payload: CanopyEntityPayload,
+    ) -> str:
+        for field in fields:
+            val = data.get(field)
+            if val:
+                return str(val)
+        joined_fields = "' or '".join(fields)
+        raise TransformError(
+            f"{payload.entity_type} '{payload.entity_id}': required field "
+            f"'{joined_fields}' is missing from payload data."
+        )
 
     def _required_sub(
         self,

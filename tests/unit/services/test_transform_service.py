@@ -125,6 +125,25 @@ def test_sample_xml_basic():
     assert sample.find("SAMPLE_NAME/SCIENTIFIC_NAME").text == "Homo sapiens"
 
 
+def test_sample_xml_accepts_taxon_id_alias():
+    svc = make_service()
+    payload = make_payload(
+        EntityType.SAMPLE,
+        "s1",
+        {
+            "title": "Blood sample",
+            "taxon_id": "9606",
+            "scientific_name": "Homo sapiens",
+        },
+    )
+    xml = svc.to_sample_xml(payload)
+    root = parse_xml(xml)
+    sample = root.find("SAMPLE")
+    assert sample is not None
+    assert sample.find("SAMPLE_NAME/TAXON_ID").text == "9606"
+    assert sample.find("SAMPLE_NAME/SCIENTIFIC_NAME").text == "Homo sapiens"
+
+
 def test_sample_xml_title_not_appended_with_taxon_id():
     svc = make_service()
     payload = make_payload(
@@ -169,18 +188,53 @@ def test_sample_xml_with_attributes():
     assert "lifestage" in tag_map
 
 
+def test_sample_xml_uses_flat_canopy_sample_fields_as_attributes():
+    svc = make_service()
+    payload = make_payload(
+        EntityType.SAMPLE,
+        "s1",
+        {
+            "title": "Sample 102.100.100/460031 for Manorina melanotis",
+            "tax_id": "1931064",
+            "scientific_name": "Manorina melanotis",
+            "sex": "female",
+            "habitat": "",
+            "lifestage": "adult",
+            "collected_by": "Rohan Clarke",
+            "organism part": "Blood sample",
+            "collection date": "1998-09-25",
+            "sample collection method": "Mist netting",
+            "geographic location (country and/or sea)": "Australia",
+            "geographic location (region and locality)": "Taylorville, site TAY06",
+        },
+    )
+    xml = svc.to_sample_xml(payload)
+    root = parse_xml(xml)
+    attrs = root.findall("SAMPLE/SAMPLE_ATTRIBUTES/SAMPLE_ATTRIBUTE")
+    tag_map = {a.find("TAG").text: a.find("VALUE").text for a in attrs}
+
+    assert tag_map["sex"] == "female"
+    assert tag_map["lifestage"] == "adult"
+    assert tag_map["collected_by"] == "Rohan Clarke"
+    assert tag_map["organism part"] == "Blood sample"
+    assert tag_map["collection date"] == "1998-09-25"
+    assert tag_map["collection method"] == "Mist netting"
+    assert tag_map["geographic location (country and/or sea)"] == "Australia"
+    assert tag_map["geographic location (region and locality)"] == "Taylorville, site TAY06"
+
+
 def test_sample_xml_missing_tax_id_raises():
     svc = make_service()
     payload = make_payload(
         EntityType.SAMPLE, "s1",
         {"title": "T", "scientific_name": "Homo sapiens"},
     )
-    with pytest.raises(TransformError, match="tax_id"):
+    with pytest.raises(TransformError, match="tax_id' or 'taxon_id"):
         svc.to_sample_xml(payload)
 
 
-def test_sample_missing_required_attributes_filled_with_not_provided():
-    """Missing required ATOL attributes must be injected as 'missing:not provided'."""
+def test_sample_missing_required_attributes_filled_with_defaults():
+    """Missing required ATOL attributes must be injected with broker defaults."""
     svc = make_service()
     payload = make_payload(
         EntityType.SAMPLE, "s1",
@@ -195,16 +249,15 @@ def test_sample_missing_required_attributes_filled_with_not_provided():
     not_provided_tags = [
         "lifestage", "organism part", "collected_by",
         "geographic location (region and locality)", "habitat", "sex",
-        "collecting institution",
+        "collection method", "collecting institution",
     ]
     for tag in not_provided_tags:
         assert tag in tag_map, f"Required attribute '{tag}' missing from XML"
         assert tag_map[tag] == "missing:not provided", (
             f"Expected 'missing:not provided' for '{tag}', got '{tag_map[tag]}'"
         )
-    # Tags that must be present but have temporary overrides (not "missing:not provided")
-    assert "collection date" in tag_map
-    assert "geographic location (country and/or sea)" in tag_map
+    assert tag_map["collection date"] == "not provided"
+    assert tag_map["geographic location (country and/or sea)"] == "not provided"
 
 
 def test_sample_project_name_always_atol_genome_engine():
