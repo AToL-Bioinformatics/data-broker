@@ -36,7 +36,7 @@ def make_project_entity() -> EntitySubmissionState:
     return EntitySubmissionState(
         entity_id="p1",
         entity_type=EntityType.PROJECT,
-        raw_payload={"title": "Test", "description": "Desc"},
+        raw_payload={"title": "Valid ENA project title", "description": "Desc"},
     )
 
 
@@ -192,6 +192,33 @@ def test_submit_project_failure():
 
     assert result.status == EntitySubmissionStatus.FAILED
     assert "Alias taken" in result.error_message
+
+
+def test_submit_project_failure_logs_xml_and_receipt(caplog):
+    svc, mocks = make_service(
+        ENASubmissionResult(
+            entity_id="p1",
+            success=False,
+            raw_receipt="<RECEIPT success='false'><MESSAGES><ERROR>Alias taken</ERROR></MESSAGES></RECEIPT>",
+            error_message="Alias taken",
+            http_status=400,
+        )
+    )
+    attempt = make_attempt()
+    entity = make_project_entity()
+    attempt.entities[EntityType.PROJECT].append(entity)
+
+    with caplog.at_level("WARNING"):
+        svc.submit_entity(entity, attempt)
+
+    log_text = caplog.text
+    assert "Failed: project p1 — Alias taken" in log_text
+    assert "Submission XML for failed project p1:" in log_text
+    assert "<SUBMISSION/>" in log_text
+    assert "Entity XML for failed project p1:" in log_text
+    assert "<PROJECT_SET/>" in log_text
+    assert "ENA receipt for failed project p1:" in log_text
+    assert "<RECEIPT success='false'>" in log_text
 
 
 def test_prerequisite_missing_does_not_save_state():

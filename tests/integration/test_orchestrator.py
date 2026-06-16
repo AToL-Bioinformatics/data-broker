@@ -236,6 +236,37 @@ def test_bulk_only_disables_state_fallback(tmp_state_store):
            (call_kwargs.args and not call_kwargs.args[3] if len(call_kwargs.args) > 3 else False)
 
 
+def test_bulk_only_filters_mixed_claim_locally(tmp_state_store):
+    """--only mode must not submit entities of other types even if Canopy returns them."""
+    claim = make_claim(
+        "atm-5b",
+        [
+            make_entity_payload(EntityType.PROJECT, "p1"),
+            make_entity_payload(EntityType.SAMPLE, "s1"),
+            make_entity_payload(EntityType.PROJECT, "p2"),
+        ],
+    )
+    canopy = MagicMock()
+    canopy.claim_by_tax_id.return_value = claim
+
+    submitted_ids: list[str] = []
+
+    def track_submit(entity, attempt_state, cli_overrides=None, allow_state_fallback=True):
+        submitted_ids.append(entity.entity_id)
+        entity.mark_succeeded(f"ACC-{entity.entity_id}")
+        return entity
+
+    submission_svc = MagicMock()
+    submission_svc.submit_entity.side_effect = track_submit
+
+    orchestrator = make_orchestrator(canopy, submission_svc, tmp_state_store)
+    attempt = orchestrator.run_bulk("9606", only=EntityType.PROJECT, submission_mode=SubmissionMode.NORMAL)
+
+    assert submitted_ids == ["p1", "p2"]
+    assert len(attempt.entities[EntityType.PROJECT]) == 2
+    assert attempt.entities[EntityType.SAMPLE] == []
+
+
 def test_bulk_prerequisite_missing_propagates(tmp_state_store):
     """PrerequisiteMissingError must propagate from run_bulk without being swallowed."""
     claim = make_claim("atm-6", [make_entity_payload(EntityType.SAMPLE, "s1")])

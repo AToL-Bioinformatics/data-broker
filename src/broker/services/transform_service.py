@@ -338,6 +338,18 @@ class TransformService:
         payload: CanopyEntityPayload,
     ) -> etree._Element:
         val = self._require_field(data, field, payload)
+        if tag == "TITLE" and payload.entity_type == "project":
+            val = self._with_taxon_id_suffix(val, payload)
         el = etree.SubElement(parent, tag)
         el.text = val
         return el
+
+    @staticmethod
+    def _with_taxon_id_suffix(value: str, payload: CanopyEntityPayload) -> str:
+        tax_id = payload.data.get("tax_id") or payload.data.get("taxon_id")
+        if not tax_id:
+            return value
+        suffix = f" ({tax_id})"
+        if value.endswith(suffix):
+            return value
+        return f"{value}{suffix}"

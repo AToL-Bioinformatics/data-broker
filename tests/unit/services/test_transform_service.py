@@ -47,6 +47,42 @@ def test_project_xml_basic():
     assert project.find("SUBMISSION_PROJECT/SEQUENCING_PROJECT") is not None
 
 
+def test_project_xml_title_appends_taxon_id_suffix():
+    svc = make_service()
+    payload = make_payload(
+        EntityType.PROJECT,
+        "p1",
+        {
+            "title": "Short project title",
+            "taxon_id": 1931064,
+            "description": "A genomics project",
+        },
+    )
+    xml = svc.to_project_xml(payload)
+    root = parse_xml(xml)
+    project = root.find("PROJECT")
+    assert project is not None
+    assert project.find("TITLE").text == "Short project title (1931064)"
+
+
+def test_project_xml_title_does_not_duplicate_taxon_id_suffix():
+    svc = make_service()
+    payload = make_payload(
+        EntityType.PROJECT,
+        "p1",
+        {
+            "title": "Short project title (1931064)",
+            "taxon_id": 1931064,
+            "description": "A genomics project",
+        },
+    )
+    xml = svc.to_project_xml(payload)
+    root = parse_xml(xml)
+    project = root.find("PROJECT")
+    assert project is not None
+    assert project.find("TITLE").text == "Short project title (1931064)"
+
+
 def test_project_xml_missing_title_raises():
     svc = make_service()
     payload = make_payload(EntityType.PROJECT, "p1", {"description": "no title"})
@@ -87,6 +123,24 @@ def test_sample_xml_basic():
     sample = root.find("SAMPLE")
     assert sample.find("SAMPLE_NAME/TAXON_ID").text == "9606"
     assert sample.find("SAMPLE_NAME/SCIENTIFIC_NAME").text == "Homo sapiens"
+
+
+def test_sample_xml_title_not_appended_with_taxon_id():
+    svc = make_service()
+    payload = make_payload(
+        EntityType.SAMPLE,
+        "s1",
+        {
+            "title": "Blood sample",
+            "tax_id": "9606",
+            "scientific_name": "Homo sapiens",
+        },
+    )
+    xml = svc.to_sample_xml(payload)
+    root = parse_xml(xml)
+    sample = root.find("SAMPLE")
+    assert sample is not None
+    assert sample.find("TITLE").text == "Blood sample"
 
 
 def test_sample_xml_with_attributes():

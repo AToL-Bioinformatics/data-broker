@@ -93,6 +93,16 @@ class Orchestrator:
                 status=AttemptStatus.COMPLETED,
                 hold_until_date=hold_until_date,
             )
+        if only is not None:
+            filtered_entities = [entity for entity in claim.entities if entity.type == only]
+            if len(filtered_entities) != len(claim.entities):
+                logger.info(
+                    "Locally filtering Canopy claim to only=%s (%d -> %d entities)",
+                    only,
+                    len(claim.entities),
+                    len(filtered_entities),
+                )
+            claim = claim.model_copy(update={"entities": filtered_entities})
         attempt = self._build_attempt_state(
             claim=claim,
             tax_id=tax_id,

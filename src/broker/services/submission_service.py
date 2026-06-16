@@ -37,6 +37,7 @@ logger = logging.getLogger(__name__)
 
 # Entity types for which a HOLD date applies
 _HOLD_APPLIES_TO = {EntityType.PROJECT, EntityType.SAMPLE}
+_ENA_PROJECT_TITLE_MIN_LENGTH = 20
 
 
 class SubmissionService:
@@ -88,6 +89,19 @@ class SubmissionService:
             cli_overrides=cli_overrides,
             allow_state_fallback=allow_state_fallback,
         )
+
+        validation_errors = self._validate_entity_for_submission(entity)
+        if validation_errors:
+            error = "; ".join(validation_errors)
+            entity.mark_failed(error)
+            logger.warning(
+                "Local validation failed: %s %s — %s",
+                entity.entity_type,
+                entity.entity_id,
+                error,
+            )
+            self._state_store.save(attempt_state)
+            return entity
 
         # Step 2: Checkpoint — mark SUBMITTED and save.
         # If the process crashes after this point and before step 6,
@@ -160,6 +174,25 @@ class SubmissionService:
                 entity.entity_id,
                 error,
             )
+            logger.warning(
+                "Submission XML for failed %s %s:\n%s",
+                entity.entity_type,
+                entity.entity_id,
+                submission_xml,
+            )
+            logger.warning(
+                "Entity XML for failed %s %s:\n%s",
+                entity.entity_type,
+                entity.entity_id,
+                entity_xml,
+            )
+            if result.raw_receipt:
+                logger.warning(
+                    "ENA receipt for failed %s %s:\n%s",
+                    entity.entity_type,
+                    entity.entity_id,
+                    result.raw_receipt,
+                )
 
         self._state_store.save(attempt_state)
         return entity
@@ -167,6 +200,25 @@ class SubmissionService:
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _validate_entity_for_submission(
+        self,
+        entity: EntitySubmissionState,
+    ) -> list[str]:
+        """Run lightweight local preflight checks before posting to ENA."""
+        errors: list[str] = []
+        data = entity.raw_payload
+        """
+        # I inferred this limit from the ENA schema for projects but instead we are just fixing taxon_id to all project titles for now
+        if entity.entity_type == EntityType.PROJECT:
+            title = data.get("title")
+            if isinstance(title, str) and len(title) < _ENA_PROJECT_TITLE_MIN_LENGTH:
+                errors.append(
+                    "project.title is too short for ENA "
+                    f"(len={len(title)}, min={_ENA_PROJECT_TITLE_MIN_LENGTH}, value={title!r})"
+                )
+        """
+        return errors
 
     def _build_entity_xml(
         self, entity: EntitySubmissionState, attempt_state: AttemptState

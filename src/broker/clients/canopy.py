@@ -102,7 +102,7 @@ class CanopyClient:
         today; the server ignores unknown fields until it is added. Tracking
         issue: add optional entity_types filter to /claims/ready.
         """
-        body: dict[str, Any] = {"tax_id": tax_id}
+        body: dict[str, Any] = {"taxon_id": tax_id}
         if entity_types is not None:
             body["entity_types"] = [str(et) for et in entity_types]
         resp = self._post("/broker/claims/ready", json=body)
