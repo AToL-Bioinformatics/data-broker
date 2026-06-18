@@ -45,61 +45,58 @@ def make_service() -> tuple[ToLIDService, dict[str, MagicMock]]:
     return service, mocks
 
 
-def test_process_requestable_reports_pending():
+def test_process_sample_accession_reports_pending():
     service, mocks = make_service()
     item = make_item()
-    mocks["canopy"].list_requestable_tolids.return_value = [item]
+    mocks["canopy"].get_tolid_by_specimen_accession.return_value = item
     mocks["tolid"].request_tolid.return_value = ToLIDLookupResult(
         status="pending",
         request_id="10306",
         pending_status="Pending",
     )
 
-    results = service.process_requestable(update_ena=False)
+    result = service.process_sample_accession("ERS123", update_ena=False)
 
-    assert len(results) == 1
-    assert results[0].status == ToLIDStatus.PENDING
-    assert results[0].request_id == "10306"
+    assert result.status == ToLIDStatus.PENDING
+    assert result.request_id == "10306"
     mocks["canopy"].report_tolid.assert_called_once()
     payload = mocks["canopy"].report_tolid.call_args.args[1]
     assert payload.status == ToLIDStatus.PENDING
     assert payload.request_id == "10306"
 
 
-def test_process_requestable_reports_assignment_without_ena_update():
+def test_process_sample_accession_reports_assignment_without_ena_update():
     service, mocks = make_service()
     item = make_item()
-    mocks["canopy"].list_requestable_tolids.return_value = [item]
+    mocks["canopy"].get_tolid_by_specimen_accession.return_value = item
     mocks["tolid"].request_tolid.return_value = ToLIDLookupResult(
         status="assigned",
         tolid="mMacGis1",
     )
 
-    results = service.process_requestable(update_ena=False)
+    result = service.process_sample_accession("ERS123", update_ena=False)
 
-    assert len(results) == 1
-    assert results[0].status == ToLIDStatus.ASSIGNED
-    assert results[0].tolid == "mMacGis1"
+    assert result.status == ToLIDStatus.ASSIGNED
+    assert result.tolid == "mMacGis1"
     mocks["ena"].submit_sample.assert_not_called()
     payload = mocks["canopy"].report_tolid.call_args.args[1]
     assert payload.status == ToLIDStatus.ASSIGNED
     assert payload.tolid == "mMacGis1"
 
 
-def test_process_requestable_error_does_not_persist_failed_status():
+def test_process_sample_accession_error_does_not_persist_failed_status():
     service, mocks = make_service()
     item = make_item()
-    mocks["canopy"].list_requestable_tolids.return_value = [item]
+    mocks["canopy"].get_tolid_by_specimen_accession.return_value = item
     mocks["tolid"].request_tolid.return_value = ToLIDLookupResult(
         status="error",
         error="HTTP 503",
     )
 
-    results = service.process_requestable(update_ena=False)
+    result = service.process_sample_accession("ERS123", update_ena=False)
 
-    assert len(results) == 1
-    assert results[0].status == ToLIDStatus.NOT_REQUESTED
-    assert results[0].error == "HTTP 503"
+    assert result.status == ToLIDStatus.NOT_REQUESTED
+    assert result.error == "HTTP 503"
     mocks["canopy"].report_tolid.assert_not_called()
 
 
@@ -155,10 +152,10 @@ def test_process_pending_reports_assignment():
     assert payload.last_requested_at == now
 
 
-def test_process_requestable_uses_sample_payload_for_ena_modify():
+def test_process_sample_accession_uses_sample_payload_for_ena_modify():
     service, mocks = make_service()
     item = make_item()
-    mocks["canopy"].list_requestable_tolids.return_value = [item]
+    mocks["canopy"].get_tolid_by_specimen_accession.return_value = item
     mocks["tolid"].request_tolid.return_value = ToLIDLookupResult(
         status="assigned",
         tolid="mMacGis1",
@@ -167,11 +164,32 @@ def test_process_requestable_uses_sample_payload_for_ena_modify():
     mocks["transform"].build_submission_xml.return_value = "<SUBMISSION/>"
     mocks["ena"].submit_sample.return_value = MagicMock(success=True, error_message=None)
 
-    results = service.process_requestable(update_ena=True)
+    result = service.process_sample_accession("ERS123", update_ena=True)
 
-    assert len(results) == 1
-    assert results[0].ena_updated is True
+    assert result.ena_updated is True
     mocks["transform"].to_sample_modify_xml.assert_called_once()
     modify_payload = mocks["transform"].to_sample_modify_xml.call_args.kwargs["payload"]
     assert modify_payload.data["title"] == "Sample ERS123 for Homo sapiens"
     mocks["canopy"].get_tolid.assert_not_called()
+
+
+def test_process_sample_accession_synthesises_title_for_ena_modify_when_missing():
+    service, mocks = make_service()
+    item = make_item(
+        kind="specimen",
+        sample_payload={"tax_id": "9606", "scientific_name": "Homo sapiens", "kind": "specimen"},
+    )
+    mocks["canopy"].get_tolid_by_specimen_accession.return_value = item
+    mocks["tolid"].request_tolid.return_value = ToLIDLookupResult(
+        status="assigned",
+        tolid="mMacGis1",
+    )
+    mocks["transform"].to_sample_modify_xml.return_value = "<SAMPLE_SET/>"
+    mocks["transform"].build_submission_xml.return_value = "<SUBMISSION/>"
+    mocks["ena"].submit_sample.return_value = MagicMock(success=True, error_message=None)
+
+    result = service.process_sample_accession("ERS123", update_ena=True)
+
+    assert result.ena_updated is True
+    modify_payload = mocks["transform"].to_sample_modify_xml.call_args.kwargs["payload"]
+    assert modify_payload.data["title"] == "Specimen ERS123 for Homo sapiens"

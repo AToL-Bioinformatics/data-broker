@@ -314,18 +314,13 @@ def resume(
 
 @tolid_app.command("request")
 def tolid_request(
-    tax_id: Annotated[
-        Optional[str],
-        typer.Option("--tax-id", help="Optional taxon filter for requestable ToLIDs"),
-    ] = None,
-    sample_id: Annotated[
-        Optional[str],
-        typer.Option("--sample-id", help="Optional Canopy sample ID to process"),
-    ] = None,
-    limit: Annotated[
-        Optional[int],
-        typer.Option("--limit", help="Optional maximum number of ToLIDs to request"),
-    ] = None,
+    sample_accession: Annotated[
+        str,
+        typer.Option(
+            "--sample-accession",
+            help="Specimen-level ENA sample accession (ERS*) to request a ToLID for",
+        ),
+    ],
     update_ena: Annotated[
         bool,
         typer.Option(
@@ -337,21 +332,19 @@ def tolid_request(
         ),
     ] = True,
 ) -> None:
-    """Request Tree of Life IDs for Canopy rows in `not_requested` state."""
+    """Request a Tree of Life ID for one specimen sample accession."""
     from broker.errors import BrokerError
 
     try:
         tolid_svc = _build_tolid_service()
-        results = tolid_svc.process_requestable(
-            tax_id=tax_id,
-            sample_id=sample_id,
-            limit=limit,
+        result = tolid_svc.process_sample_accession(
+            specimen_id=sample_accession,
             update_ena=update_ena,
         )
 
-        _render_tolid_results(results, "requestable", update_ena)
+        _render_tolid_results([result], sample_accession, update_ena)
 
-        if any(r.error for r in results):
+        if result.error:
             raise typer.Exit(code=1)
 
     except BrokerError as exc:

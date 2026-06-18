@@ -465,18 +465,17 @@ def test_report_outcome_failure_does_not_raise(httpx_mock):
 # ---------------------------------------------------------------------------
 
 
-def test_list_requestable_tolids(httpx_mock):
+def test_get_tolid_by_specimen_accession(httpx_mock):
     add_login_mock(httpx_mock)
     httpx_mock.add_response(
         method="GET",
-        url="http://canopy.test/broker/tolids/requestable?taxon_id=9606&limit=10",
-        json=TOLID_LIST_RESPONSE,
+        url="http://canopy.test/broker/tolids/by-specimen-accession/ERS123",
+        json=TOLID_LIST_RESPONSE["items"][0],
     )
     client = CanopyClient(make_settings())
-    items = client.list_requestable_tolids(tax_id="9606", limit=10)
-    assert len(items) == 1
-    assert items[0].sample_id == "s1"
-    assert items[0].tax_id == "9606"
+    item = client.get_tolid_by_specimen_accession("ERS123")
+    assert item.sample_id == "s1"
+    assert item.tax_id == "9606"
 
 
 def test_list_pending_tolids(httpx_mock):

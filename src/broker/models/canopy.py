@@ -182,7 +182,7 @@ class ReportBatchPayload(BaseModel):
 class ToLIDWorkItem(BaseModel):
     sample_id: str
     specimen_id: str
-    tax_id: str = Field(validation_alias=AliasChoices("tax_id", "taxon_id"))
+    tax_id: str | int = Field(validation_alias=AliasChoices("tax_id", "taxon_id"))
     scientific_name: str | None = None
     status: ToLIDStatus
     request_id: str | None = None
@@ -194,6 +194,11 @@ class ToLIDWorkItem(BaseModel):
         default=None,
         validation_alias=AliasChoices("sample_payload", "payload"),
     )
+
+    @field_validator("tax_id", mode="after")
+    @classmethod
+    def _coerce_tax_id_to_str(cls, v: str | int) -> str:
+        return str(v)
 
 
 class ToLIDListResponse(BaseModel):

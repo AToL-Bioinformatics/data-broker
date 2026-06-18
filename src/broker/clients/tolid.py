@@ -41,7 +41,7 @@ Observed response shapes:
        ]
      }
 
-Auth: API key via the ``api-key`` request header.
+Auth: API key via the ``token`` request header.
 """
 
 from __future__ import annotations
@@ -94,7 +94,7 @@ class ToLIDClient:
                 response = client.post(
                     url,
                     json=body,
-                    headers={"api-key": self._api_key},
+                    headers={"token": self._api_key},
                 )
             response.raise_for_status()
             response_data = response.json()

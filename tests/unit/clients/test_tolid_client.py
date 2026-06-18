@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from unittest.mock import MagicMock, patch
+
 from broker.clients.tolid import ToLIDClient
 
 
@@ -60,3 +62,31 @@ def test_extract_result_pending_shape_without_species_relationship():
     assert result.request_id == "10306"
     assert result.pending_status == "Pending"
     assert result.tolid is None
+
+
+def test_request_tolid_uses_token_header():
+    response = MagicMock()
+    response.json.return_value = {
+        "data": [
+            {
+                "id": "mMacGis1",
+                "type": "specimen",
+                "relationships": {"species": {"data": {"id": "9411"}}},
+            }
+        ]
+    }
+    response.text = '{"data":[{"id":"mMacGis1"}]}'
+    response.raise_for_status.return_value = None
+
+    client = ToLIDClient(api_key="secret-token", base_url="https://id-staging.tol.sanger.ac.uk")
+
+    with patch("broker.clients.tolid.httpx.Client") as client_cls:
+        httpx_client = client_cls.return_value.__enter__.return_value
+        httpx_client.post.return_value = response
+
+        result = client.request_tolid("ERS123", 9606, "Homo sapiens")
+
+    assert result.status == "assigned"
+    httpx_client.post.assert_called_once()
+    headers = httpx_client.post.call_args.kwargs["headers"]
+    assert headers["token"] == "secret-token"

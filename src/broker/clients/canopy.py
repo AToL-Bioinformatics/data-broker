@@ -205,18 +205,9 @@ class CanopyClient:
     # Public API — ToLID
     # ------------------------------------------------------------------
 
-    def list_requestable_tolids(
-        self,
-        tax_id: str | None = None,
-        sample_id: str | None = None,
-        sample_ids: list[str] | None = None,
-        limit: int | None = None,
-    ) -> list[ToLIDWorkItem]:
-        resp = self._get(
-            "/broker/tolids/requestable",
-            params=self._tolid_query_params(tax_id, sample_id, sample_ids, limit),
-        )
-        return self._parse_tolid_list(resp.json())
+    def get_tolid_by_specimen_accession(self, specimen_id: str) -> ToLIDWorkItem:
+        resp = self._get(f"/broker/tolids/by-specimen-accession/{specimen_id}")
+        return ToLIDWorkItem.model_validate(resp.json())
 
     def list_pending_tolids(
         self,

@@ -14,7 +14,7 @@ A Python CLI tool that fetches submission-ready genomic metadata from the Canopy
   - [submit entity — single entity by type and ID](#submit-entity)
   - [submit batch — specific entities by ID](#submit-batch)
   - [resume — continue an interrupted attempt](#resume)
-  - [tolid request — create first-time ToLID requests](#tolid-request)
+  - [tolid request — request a ToLID for one sample accession](#tolid-request)
   - [tolid poll — retry pending ToLIDs](#tolid-poll)
 - [CLI execution flow](#cli-execution-flow)
 - [ENA submission flow](#ena-submission-flow)
@@ -265,22 +265,16 @@ ENA Webin is idempotent on submission alias — re-posting an entity that was al
 
 ### `tolid request`
 
-Request Tree of Life IDs for Canopy rows in `not_requested` state.
+Request a Tree of Life ID for one specimen-level ENA sample accession.
 
 ```bash
-broker tolid request
+broker tolid request --sample-accession ERS123456
 
-# Restrict to one taxon
-broker tolid request --tax-id 1931064
-
-# Restrict to one Canopy sample row
-broker tolid request --sample-id <uuid>
-
-# Fetch ToLIDs but do not send MODIFY submissions back to ENA
-broker tolid request --tax-id 1931064 --no-update-ena
+# Fetch the ToLID but do not send MODIFY back to ENA
+broker tolid request --sample-accession ERS123456 --no-update-ena
 ```
 
-This command asks Canopy for ToLID work items, calls the Sanger ToLID API for each row, then reports the result back to Canopy:
+This command asks Canopy to look up the specimen sample by ENA sample accession, then calls the Sanger ToLID API once for that sample. The result reported back to Canopy is either:
 - `assigned` with a real ToLID
 - `pending` with a request ID and updated `last_requested_at`
 
@@ -290,10 +284,8 @@ If `--update-ena` is enabled and a ToLID is assigned, the broker also attempts a
 
 | Flag | Description |
 |---|---|
-| `--tax-id` | Optional taxon filter |
-| `--sample-id` | Optional Canopy sample ID filter |
-| `--limit` | Optional maximum number of rows to process |
-| `--update-ena / --no-update-ena` | Whether to send an ENA `MODIFY` after each assigned ToLID |
+| `--sample-accession` | Specimen-level ENA sample accession (required) |
+| `--update-ena / --no-update-ena` | Whether to send an ENA `MODIFY` after an assigned ToLID |
 
 ### `tolid poll`
 
@@ -386,14 +378,13 @@ Like `submit entity`, batch mode disables state fallback. Prerequisites must alr
 
 ### `broker tolid request`
 
-1. Parse optional `--tax-id`, `--sample-id`, `--limit`, and whether ENA should be updated.
+1. Parse `--sample-accession` and whether ENA should be updated.
 2. Build the Canopy, ToLID, and ENA clients and verify `TOLID_API_KEY` is configured.
-3. Call `CanopyClient.list_requestable_tolids()` to fetch rows in `not_requested` state.
-4. For each returned row:
-   - call the Sanger ToLID `POST /api/v3/request/create` endpoint using `specimen_id`, `taxon_id`, and optional `scientific_name`
-   - if the response is `pending`, report `pending` plus `request_id` and `last_requested_at` back to Canopy
-   - if the response is `assigned`, optionally send ENA `MODIFY`, then report `assigned` plus the new `tolid` back to Canopy
-5. Render a ToLID results table and exit non-zero if any request returned an error.
+3. Call `CanopyClient.get_tolid_by_specimen_accession()` to fetch the specimen sample metadata needed for the ToLID request.
+4. Call the Sanger ToLID `POST /api/v3/request/create` endpoint using `specimen_id`, `taxon_id`, and optional `scientific_name`.
+5. If the response is `pending`, report `pending` plus `request_id` and `last_requested_at` back to Canopy.
+6. If the response is `assigned`, optionally send ENA `MODIFY`, then report `assigned` plus the new `tolid` back to Canopy.
+7. Render a ToLID results table and exit non-zero if the request returned an error.
 
 ### `broker tolid poll`
 
@@ -574,7 +565,7 @@ Outcome reporting back to Canopy happens after the run finishes, in the orchestr
 | `/broker/claims/batch` | POST | Claim specific entities by ID across types |
 | `/broker/validation` | POST | Validate prerequisite accessions for an entity |
 | `/broker/reports/{attempt_id}` | POST | Report submission outcomes (batch; `attempt_id` path-only) |
-| `/broker/tolids/requestable` | GET | Fetch ToLID rows in `not_requested` state |
+| `/broker/tolids/by-specimen-accession/{specimen_id}` | GET | Fetch one specimen sample by ENA sample accession for first-time ToLID request |
 | `/broker/tolids/pending` | GET | Fetch ToLID rows in `pending` state |
 | `/broker/tolids/{sample_id}` | GET | Fetch one ToLID row, including sample payload when available |
 | `/broker/tolids/{sample_id}/report` | POST | Report `pending` or `assigned` ToLID results |

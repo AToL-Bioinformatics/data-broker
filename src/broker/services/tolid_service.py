@@ -1,7 +1,7 @@
 """ToLID request and retry service backed by Canopy state.
 
 Flow:
-  1. Ask Canopy for requestable or pending ToLID work items
+  1. Ask Canopy for one sample by specimen accession, or ask for pending ToLID work items
   2. POST each item to the Sanger ToLID request/create endpoint
   3. Report assigned/pending/failed outcomes back to Canopy
   4. Optionally submit an ENA MODIFY to attach the tolid sample attribute
@@ -57,26 +57,19 @@ class ToLIDService:
         self._ena = ena_client
         self._transform = transform_service
 
-    def process_requestable(
+    def process_sample_accession(
         self,
-        tax_id: str | None = None,
-        sample_id: str | None = None,
-        limit: int | None = None,
+        specimen_id: str,
         update_ena: bool = True,
-    ) -> list[ToLIDResult]:
-        items = self._canopy.list_requestable_tolids(
-            tax_id=tax_id,
-            sample_id=sample_id,
-            limit=limit,
-        )
+    ) -> ToLIDResult:
+        item = self._canopy.get_tolid_by_specimen_accession(specimen_id)
         logger.info(
-            "Canopy returned %d requestable ToLID row(s) (tax_id=%s, sample_id=%s, limit=%s)",
-            len(items),
-            tax_id,
-            sample_id,
-            limit,
+            "Canopy returned ToLID work item for specimen accession %s (sample_id=%s, status=%s)",
+            specimen_id,
+            item.sample_id,
+            item.status,
         )
-        return [self._process_one(item, update_ena=update_ena) for item in items]
+        return self._process_one(item, update_ena=update_ena)
 
     def process_pending(
         self,
@@ -249,9 +242,22 @@ class ToLIDService:
             normalised_data["tax_id"] = item.tax_id
         if "scientific_name" not in normalised_data and item.scientific_name:
             normalised_data["scientific_name"] = item.scientific_name
+        if "title" not in normalised_data or not normalised_data["title"]:
+            normalised_data["title"] = self._fallback_sample_title(item)
+            logger.info(
+                "Synthesised sample title for ENA MODIFY on sample %s: %s",
+                item.sample_id,
+                normalised_data["title"],
+            )
 
         return CanopyEntityPayload(
             entity_id=item.sample_id,
             entity_type=EntityType.SAMPLE,
             data=normalised_data,
         )
+
+    @staticmethod
+    def _fallback_sample_title(item: ToLIDWorkItem) -> str:
+        scientific_name = item.scientific_name or "unknown organism"
+        label = "Specimen" if item.kind == "specimen" else "Sample"
+        return f"{label} {item.specimen_id} for {scientific_name}"
