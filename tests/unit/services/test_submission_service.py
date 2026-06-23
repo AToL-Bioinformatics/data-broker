@@ -40,6 +40,18 @@ def make_project_entity() -> EntitySubmissionState:
     )
 
 
+def make_sample_entity() -> EntitySubmissionState:
+    return EntitySubmissionState(
+        entity_id="s1",
+        entity_type=EntityType.SAMPLE,
+        raw_payload={
+            "title": "Sample title",
+            "tax_id": "9606",
+            "scientific_name": "Homo sapiens",
+        },
+    )
+
+
 def success_result(entity_id: str = "p1", accession: str = "PRJEB1") -> ENASubmissionResult:
     return ENASubmissionResult(
         entity_id=entity_id,
@@ -219,6 +231,28 @@ def test_submit_project_failure_logs_xml_and_receipt(caplog):
     assert "<PROJECT_SET/>" in log_text
     assert "ENA receipt for failed project p1:" in log_text
     assert "<RECEIPT success='false'>" in log_text
+
+
+def test_submit_sample_logs_sample_xml_at_info(caplog):
+    svc, mocks = make_service(
+        ENASubmissionResult(
+            entity_id="s1",
+            success=True,
+            accessions=ENAAccessions(primary_accession="ERS123"),
+            raw_receipt="<RECEIPT success='true'/>",
+            http_status=200,
+        )
+    )
+    attempt = make_attempt()
+    entity = make_sample_entity()
+    attempt.entities[EntityType.SAMPLE].append(entity)
+
+    with caplog.at_level("INFO"):
+        svc.submit_entity(entity, attempt)
+
+    log_text = caplog.text
+    assert "Sample XML for sample s1:" in log_text
+    assert "<SAMPLE_SET/>" in log_text
 
 
 def test_prerequisite_missing_does_not_save_state():

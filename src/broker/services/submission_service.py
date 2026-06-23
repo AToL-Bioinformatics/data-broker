@@ -143,6 +143,12 @@ class SubmissionService:
             entity.entity_id,
             entity_xml,
         )
+        if entity.entity_type == EntityType.SAMPLE:
+            logger.info(
+                "Sample XML for sample %s:\n%s",
+                entity.entity_id,
+                entity_xml,
+            )
         result = self._dispatch_to_ena(entity, submission_xml, entity_xml)
 
         # Step 5: Persist raw receipt verbatim

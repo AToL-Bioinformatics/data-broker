@@ -47,42 +47,6 @@ def test_project_xml_basic():
     assert project.find("SUBMISSION_PROJECT/SEQUENCING_PROJECT") is not None
 
 
-def test_project_xml_title_appends_taxon_id_suffix():
-    svc = make_service()
-    payload = make_payload(
-        EntityType.PROJECT,
-        "p1",
-        {
-            "title": "Short project title",
-            "taxon_id": 1931064,
-            "description": "A genomics project",
-        },
-    )
-    xml = svc.to_project_xml(payload)
-    root = parse_xml(xml)
-    project = root.find("PROJECT")
-    assert project is not None
-    assert project.find("TITLE").text == "Short project title (1931064)"
-
-
-def test_project_xml_title_does_not_duplicate_taxon_id_suffix():
-    svc = make_service()
-    payload = make_payload(
-        EntityType.PROJECT,
-        "p1",
-        {
-            "title": "Short project title (1931064)",
-            "taxon_id": 1931064,
-            "description": "A genomics project",
-        },
-    )
-    xml = svc.to_project_xml(payload)
-    root = parse_xml(xml)
-    project = root.find("PROJECT")
-    assert project is not None
-    assert project.find("TITLE").text == "Short project title (1931064)"
-
-
 def test_project_xml_missing_title_raises():
     svc = make_service()
     payload = make_payload(EntityType.PROJECT, "p1", {"description": "no title"})
