@@ -74,7 +74,8 @@ cp .env.example .env
 | `CANOPY_USERNAME` | ✅ | — | Canopy API username |
 | `CANOPY_PASSWORD` | ✅ | — | Canopy API password |
 | `CANOPY_BASE_URL` | ✅ | — | Canopy API base URL, e.g. `http://localhost:8000/api/v1` |
-| `ENA_BASE_URL` | | dev server | ENA drop-box endpoint (see below) |
+| `ENA_DEV_BASE_URL` | | dev server | ENA dev drop-box endpoint |
+| `ENA_PROD_BASE_URL` | | prod server | ENA production drop-box endpoint |
 | `BROKER_STATE_DIR` | | `~/.broker/state` | Attempt state file directory |
 | `BROKER_RECEIPT_DIR` | | `~/.broker/receipts` | Raw ENA receipt directory |
 | `HTTP_TIMEOUT_SECONDS` | | `30.0` | Per-request HTTP timeout |
@@ -82,29 +83,32 @@ cp .env.example .env
 | `HTTP_RETRY_MIN_WAIT` | | `1.0` | Min seconds between retries |
 | `HTTP_RETRY_MAX_WAIT` | | `30.0` | Max seconds between retries |
 | `TOLID_API_KEY` | | — | API key for the Sanger ToLID service |
-| `TOLID_BASE_URL` | | staging server | ToLID API base URL |
+| `TOLID_DEV_BASE_URL` | | staging server | ToLID dev/staging API base URL |
+| `TOLID_PROD_BASE_URL` | | prod server | ToLID production API base URL |
 
 **ENA environments:**
 
 ```bash
 # Dev server — safe for testing (submissions do not go live)
-ENA_BASE_URL=https://wwwdev.ebi.ac.uk/ena/submit/drop-box/submit/
+ENA_DEV_BASE_URL=https://wwwdev.ebi.ac.uk/ena/submit/drop-box/submit/
 
 # Production
-ENA_BASE_URL=https://www.ebi.ac.uk/ena/submit/drop-box/submit/
+ENA_PROD_BASE_URL=https://www.ebi.ac.uk/ena/submit/drop-box/submit/
 ```
 
-The default is the **dev server**. Switch to production intentionally.
+The broker uses the **dev server** by default. Pass `--prod` on the CLI to switch to `ENA_PROD_BASE_URL`.
 
 **ToLID environments:**
 
 ```bash
 # Staging server — use this for testing
-TOLID_BASE_URL=https://id-staging.tol.sanger.ac.uk
+TOLID_DEV_BASE_URL=https://id-staging.tol.sanger.ac.uk
 
 # Production
-# TOLID_BASE_URL=https://id.tol.sanger.ac.uk
+TOLID_PROD_BASE_URL=https://id.tol.sanger.ac.uk
 ```
+
+The broker uses the **staging/dev ToLID server** by default. Pass `--prod` on the CLI to switch to `TOLID_PROD_BASE_URL`.
 
 ---
 
@@ -116,6 +120,9 @@ Claim and submit every entity Canopy has marked ready for a given taxonomy ID, i
 
 ```bash
 broker submit ready --tax-id 9606
+
+# Use production ENA and ToLID servers
+broker submit ready --tax-id 9606 --prod
 ```
 
 **Filter to one entity type** (`--only`):
@@ -145,6 +152,7 @@ Valid `--only` values: `projects`, `samples`, `experiments`, `runs`.
 | `--experiment-accession` | Override or supply experiment accession |
 | `--dry-run` | Build XML but do not call ENA |
 | `--validate-only` | Reserved for a validation-only flow; see note below about current implementation status |
+| `--prod` | Use production ENA and ToLID servers instead of dev/staging |
 
 ---
 
@@ -183,6 +191,7 @@ Valid `--type` values: `project`, `sample`, `experiment`, `run`.
 | `--experiment-accession` | Override or supply experiment accession |
 | `--hold-until YYYY-MM-DD` | ENA embargo date (projects and samples only) |
 | `--dry-run` | Build XML but do not call ENA |
+| `--prod` | Use production ENA and ToLID servers instead of dev/staging |
 
 ---
 
@@ -225,6 +234,9 @@ Any key can be omitted if you have no entities of that type.
 
 ```bash
 broker submit batch --from-file batch.json --runs extra-run-id
+
+# Run the batch against the production ENA server
+broker submit batch --from-file batch.json --prod
 ```
 
 Duplicate IDs across file and inline flags are de-duplicated automatically.
@@ -243,6 +255,7 @@ Duplicate IDs across file and inline flags are de-duplicated automatically.
 | `--experiment-accession` | Override or supply experiment accession |
 | `--hold-until YYYY-MM-DD` | ENA embargo date (projects and samples only) |
 | `--dry-run` | Build XML but do not call ENA |
+| `--prod` | Use production ENA and ToLID servers instead of dev/staging |
 
 > Like `submit entity`, batch mode disables state fallback — all prerequisites must be explicit.
 
@@ -257,6 +270,9 @@ broker resume --attempt-id <uuid>
 
 # If an accession is now available that was missing before:
 broker resume --attempt-id <uuid> --project-accession PRJEB12345
+
+# Resume against the production ENA server
+broker resume --attempt-id <uuid> --prod
 ```
 
 ENA Webin is idempotent on submission alias — re-posting an entity that was already accepted safely returns the same accession. This is the property that makes crash-safe resume correct.
@@ -270,22 +286,26 @@ Request a Tree of Life ID for one specimen-level ENA sample accession.
 ```bash
 broker tolid request --sample-accession ERS123456
 
-# Fetch the ToLID but do not send MODIFY back to ENA
-broker tolid request --sample-accession ERS123456 --no-update-ena
+# Fetch the ToLID and also send MODIFY back to ENA
+broker tolid request --sample-accession ERS123456 --update-ena
+
+# Use the production ToLID and ENA servers
+broker tolid request --sample-accession ERS123456 --prod
 ```
 
 This command asks Canopy to look up the specimen sample by ENA sample accession, then calls the Sanger ToLID API once for that sample. The result reported back to Canopy is either:
 - `assigned` with a real ToLID
 - `pending` with a request ID and updated `last_requested_at`
 
-If `--update-ena` is enabled and a ToLID is assigned, the broker also attempts an ENA `MODIFY` submission to add the `tolid` sample attribute. The ToLID is still reported back to Canopy even if ENA `MODIFY` fails.
+By default this command does not send an ENA `MODIFY`. If `--update-ena` is enabled and a ToLID is assigned, the broker also attempts an ENA `MODIFY` submission to add the `tolid` sample attribute. The ToLID is still reported back to Canopy even if ENA `MODIFY` fails.
 
 **All flags:**
 
 | Flag | Description |
 |---|---|
 | `--sample-accession` | Specimen-level ENA sample accession (required) |
-| `--update-ena / --no-update-ena` | Whether to send an ENA `MODIFY` after an assigned ToLID |
+| `--update-ena / --no-update-ena` | Whether to send an ENA `MODIFY` after an assigned ToLID (default: off) |
+| `--prod` | Use production ENA and ToLID servers instead of dev/staging |
 
 ### `tolid poll`
 
@@ -299,6 +319,12 @@ broker tolid poll --tax-id 1931064
 
 # Restrict to one Canopy sample row
 broker tolid poll --sample-id <uuid>
+
+# Retry pending rows and also send MODIFY back to ENA on assignment
+broker tolid poll --update-ena
+
+# Retry against the production ToLID and ENA servers
+broker tolid poll --prod
 ```
 
 This command does not decide which rows are due for retry. It simply polls whatever pending rows Canopy returns, re-posting the same Sanger `request/create` call for each one.
@@ -310,7 +336,8 @@ This command does not decide which rows are due for retry. It simply polls whate
 | `--tax-id` | Optional taxon filter |
 | `--sample-id` | Optional Canopy sample ID filter |
 | `--limit` | Optional maximum number of rows to process |
-| `--update-ena / --no-update-ena` | Whether to send an ENA `MODIFY` after each assigned ToLID |
+| `--update-ena / --no-update-ena` | Whether to send an ENA `MODIFY` after each assigned ToLID (default: off) |
+| `--prod` | Use production ENA and ToLID servers instead of dev/staging |
 
 ---
 

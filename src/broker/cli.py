@@ -82,6 +82,13 @@ def submit_ready(
     project_accession: Annotated[Optional[str], typer.Option("--project-accession", help="Project/study accession (PRJEB*)")] = None,
     sample_accession: Annotated[Optional[str], typer.Option("--sample-accession", help="Sample accession (ERS*)")] = None,
     experiment_accession: Annotated[Optional[str], typer.Option("--experiment-accession", help="Experiment accession (ERX*)")] = None,
+    prod: Annotated[
+        bool,
+        typer.Option(
+            "--prod",
+            help="Use the production ENA and ToLID servers. Default is the dev/staging servers.",
+        ),
+    ] = False,
 ) -> None:
     """Submit all ready entities for a taxonomy ID, in dependency order."""
     from broker.errors import BrokerError
@@ -96,7 +103,7 @@ def submit_ready(
     cli_overrides = _build_cli_overrides(project_accession, sample_accession, experiment_accession)
 
     try:
-        orchestrator = _build_orchestrator(submission_mode=submission_mode)
+        orchestrator = _build_orchestrator(submission_mode=submission_mode, prod=prod)
         attempt = orchestrator.run_bulk(
             tax_id=tax_id,
             only=only_type,
@@ -125,6 +132,13 @@ def submit_entity(
     sample_accession: Annotated[Optional[str], typer.Option("--sample-accession", help="Sample accession (ERS*)")] = None,
     experiment_accession: Annotated[Optional[str], typer.Option("--experiment-accession", help="Experiment accession (ERX*)")] = None,
     dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
+    prod: Annotated[
+        bool,
+        typer.Option(
+            "--prod",
+            help="Use the production ENA and ToLID servers. Default is the dev/staging servers.",
+        ),
+    ] = False,
     hold_until: Annotated[
         Optional[str],
         typer.Option("--hold-until", help="ENA release date ISO 8601 (e.g. 2026-01-01). For projects and samples only."),
@@ -144,7 +158,7 @@ def submit_entity(
     cli_overrides = _build_cli_overrides(project_accession, sample_accession, experiment_accession)
 
     try:
-        orchestrator = _build_orchestrator(submission_mode=submission_mode)
+        orchestrator = _build_orchestrator(submission_mode=submission_mode, prod=prod)
         attempt = orchestrator.run_targeted(
             entity_type=entity_type,
             entity_id=id_,
@@ -200,6 +214,13 @@ def submit_batch(
     sample_accession: Annotated[Optional[str], typer.Option("--sample-accession", help="Sample accession (ERS*)")] = None,
     experiment_accession: Annotated[Optional[str], typer.Option("--experiment-accession", help="Experiment accession (ERX*)")] = None,
     dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
+    prod: Annotated[
+        bool,
+        typer.Option(
+            "--prod",
+            help="Use the production ENA and ToLID servers. Default is the dev/staging servers.",
+        ),
+    ] = False,
     hold_until: Annotated[
         Optional[str],
         typer.Option("--hold-until", help="ENA release date ISO 8601 (e.g. 2026-01-01). For projects and samples only."),
@@ -256,7 +277,7 @@ def submit_batch(
         raise typer.Exit(code=1)
 
     try:
-        orchestrator = _build_orchestrator(submission_mode=submission_mode)
+        orchestrator = _build_orchestrator(submission_mode=submission_mode, prod=prod)
         attempt = orchestrator.run_batch(
             project_ids=project_ids or None,
             sample_ids=sample_ids or None,
@@ -285,6 +306,13 @@ def resume(
     project_accession: Annotated[Optional[str], typer.Option("--project-accession")] = None,
     sample_accession: Annotated[Optional[str], typer.Option("--sample-accession")] = None,
     experiment_accession: Annotated[Optional[str], typer.Option("--experiment-accession")] = None,
+    prod: Annotated[
+        bool,
+        typer.Option(
+            "--prod",
+            help="Use the production ENA and ToLID servers. Default is the dev/staging servers.",
+        ),
+    ] = False,
 ) -> None:
     """Resume a previously interrupted submission attempt.
 
@@ -297,7 +325,7 @@ def resume(
     cli_overrides = _build_cli_overrides(project_accession, sample_accession, experiment_accession)
 
     try:
-        resume_svc = _build_resume_service()
+        resume_svc = _build_resume_service(prod=prod)
         attempt = resume_svc.resume(attempt_id, cli_overrides=cli_overrides)
         _render_attempt(attempt)
         if attempt.status.value in ("failed", "partial"):
@@ -327,16 +355,23 @@ def tolid_request(
             "--update-ena/--no-update-ena",
             help=(
                 "Submit a MODIFY to ENA after each successful ToLID request "
-                "to record the tolid sample attribute (default: on)."
+                "to record the tolid sample attribute (default: off)."
             ),
         ),
-    ] = True,
+    ] = False,
+    prod: Annotated[
+        bool,
+        typer.Option(
+            "--prod",
+            help="Use the production ENA and ToLID servers. Default is the dev/staging servers.",
+        ),
+    ] = False,
 ) -> None:
     """Request a Tree of Life ID for one specimen sample accession."""
     from broker.errors import BrokerError
 
     try:
-        tolid_svc = _build_tolid_service()
+        tolid_svc = _build_tolid_service(prod=prod)
         result = tolid_svc.process_sample_accession(
             specimen_id=sample_accession,
             update_ena=update_ena,
@@ -372,16 +407,23 @@ def tolid_poll(
             "--update-ena/--no-update-ena",
             help=(
                 "Submit a MODIFY to ENA after each successful ToLID request "
-                "to record the tolid sample attribute (default: on)."
+                "to record the tolid sample attribute (default: off)."
             ),
         ),
-    ] = True,
+    ] = False,
+    prod: Annotated[
+        bool,
+        typer.Option(
+            "--prod",
+            help="Use the production ENA and ToLID servers. Default is the dev/staging servers.",
+        ),
+    ] = False,
 ) -> None:
     """Retry Tree of Life IDs for Canopy rows in `pending` state."""
     from broker.errors import BrokerError
 
     try:
-        tolid_svc = _build_tolid_service()
+        tolid_svc = _build_tolid_service(prod=prod)
         results = tolid_svc.process_pending(
             tax_id=tax_id,
             sample_id=sample_id,
@@ -404,7 +446,7 @@ def tolid_poll(
 # ---------------------------------------------------------------------------
 
 
-def _build_orchestrator(submission_mode: SubmissionMode):
+def _build_orchestrator(submission_mode: SubmissionMode, prod: bool = False):
     """Wire all clients and services and return an Orchestrator."""
     from broker.clients.canopy import CanopyClient
     from broker.clients.ena import ENAClient
@@ -421,7 +463,7 @@ def _build_orchestrator(submission_mode: SubmissionMode):
     settings = get_settings()
 
     canopy_client = CanopyClient(settings)
-    ena_client = ENAClient(settings)
+    ena_client = ENAClient(settings, base_url=settings.ena_prod_base_url if prod else settings.ena_dev_base_url)
 
     state_store = StateStore(settings.state_dir)
     receipt_store = ReceiptStore(settings.receipt_dir)
@@ -448,7 +490,7 @@ def _build_orchestrator(submission_mode: SubmissionMode):
     )
 
 
-def _build_resume_service():
+def _build_resume_service(prod: bool = False):
     from broker.clients.canopy import CanopyClient
     from broker.clients.ena import ENAClient
     from broker.config import get_settings
@@ -464,7 +506,7 @@ def _build_resume_service():
     settings = get_settings()
 
     canopy_client = CanopyClient(settings)
-    ena_client = ENAClient(settings)
+    ena_client = ENAClient(settings, base_url=settings.ena_prod_base_url if prod else settings.ena_dev_base_url)
 
     state_store = StateStore(settings.state_dir)
     receipt_store = ReceiptStore(settings.receipt_dir)
@@ -491,7 +533,7 @@ def _build_resume_service():
     )
 
 
-def _build_tolid_service():
+def _build_tolid_service(prod: bool = False):
     from broker.clients.canopy import CanopyClient
     from broker.clients.ena import ENAClient
     from broker.clients.tolid import ToLIDClient
@@ -512,9 +554,9 @@ def _build_tolid_service():
         canopy_client=CanopyClient(settings),
         tolid_client=ToLIDClient(
             api_key=settings.tolid_api_key,
-            base_url=settings.tolid_base_url,
+            base_url=settings.tolid_prod_base_url if prod else settings.tolid_dev_base_url,
         ),
-        ena_client=ENAClient(settings),
+        ena_client=ENAClient(settings, base_url=settings.ena_prod_base_url if prod else settings.ena_dev_base_url),
         transform_service=TransformService(webin_account=settings.webin_username),
     )
 
@@ -548,7 +590,7 @@ def _render_attempt(attempt) -> None:
     for entity in attempt.all_entities_flat():
         style = status_styles.get(entity.status, "")
         table.add_row(
-            str(entity.entity_type),
+            _format_entity_type_label(entity),
             entity.entity_id,
             f"[{style}]{entity.status}[/{style}]",
             entity.ena_accession or "",
@@ -559,6 +601,18 @@ def _render_attempt(attempt) -> None:
 
     console.print(table)
     console.print(f"State saved to: ~/.broker/state/{attempt.attempt_id}.json")
+
+
+def _format_entity_type_label(entity) -> str:
+    label = str(entity.entity_type)
+    if label != "sample":
+        return label
+
+    kind = entity.raw_payload.get("kind")
+    if not kind:
+        return label
+
+    return f"{label} ({kind})"
 
 
 def _render_tolid_results(results, scope: str, update_ena: bool) -> None:

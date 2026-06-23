@@ -8,7 +8,8 @@ Required variables:
   CANOPY_PASSWORD     Canopy login password
 
 Optional variables (defaults shown):
-  ENA_BASE_URL        ENA drop-box submit endpoint
+  ENA_DEV_BASE_URL    ENA dev drop-box submit endpoint
+  ENA_PROD_BASE_URL   ENA prod drop-box submit endpoint
   BROKER_STATE_DIR    Where to store attempt state JSON files (~/.broker/state)
   BROKER_RECEIPT_DIR  Where to store raw ENA receipts (~/.broker/receipts)
   HTTP_TIMEOUT_SECONDS   Per-request timeout in seconds (30.0)
@@ -18,14 +19,15 @@ Optional variables (defaults shown):
 
 ToLID (optional — ToLID requests are skipped when TOLID_API_KEY is not set):
   TOLID_API_KEY       API key for the Sanger Tree of Life ID service
-  TOLID_BASE_URL      ToLID service base URL (defaults to staging)
+  TOLID_DEV_BASE_URL  ToLID dev/staging base URL
+  TOLID_PROD_BASE_URL ToLID production base URL
 """
 
 from __future__ import annotations
 
 from functools import lru_cache
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -40,12 +42,13 @@ class BrokerSettings(BaseSettings):
     # ENA credentials
     webin_username: str = Field(alias="WEBIN_USERNAME")
     webin_password: str = Field(alias="WEBIN_PASSWORD")
-    # TODO handle prod and dev envs with separate vars or a single ENV var to switch URLs
-    # ASSUMPTION: ENA drop-box submit URL. Override with ENA_BASE_URL env var.
-    # The test server is https://wwwdev.ebi.ac.uk/ena/submit/drop-box/submit/
-    ena_base_url: str = Field(
+    ena_dev_base_url: str = Field(
         default="https://wwwdev.ebi.ac.uk/ena/submit/drop-box/submit/",
-        alias="ENA_BASE_URL",
+        validation_alias=AliasChoices("ENA_DEV_BASE_URL", "ENA_BASE_URL"),
+    )
+    ena_prod_base_url: str = Field(
+        default="https://www.ebi.ac.uk/ena/submit/drop-box/submit/",
+        alias="ENA_PROD_BASE_URL",
     )
 
     # Canopy
@@ -65,13 +68,14 @@ class BrokerSettings(BaseSettings):
 
     # ToLID — optional; skip ToLID requests when api key is absent
     tolid_api_key: str | None = Field(default=None, alias="TOLID_API_KEY")
-    tolid_base_url: str = Field(
-        # default="https://id.tol.sanger.ac.uk",
-        # TODO tolid server as ENV variable
+    tolid_dev_base_url: str = Field(
         default="https://id-staging.tol.sanger.ac.uk",
-        alias="TOLID_BASE_URL",
+        validation_alias=AliasChoices("TOLID_DEV_BASE_URL", "TOLID_BASE_URL"),
     )
-
+    tolid_prod_base_url: str = Field(
+        default="https://id.tol.sanger.ac.uk",
+        alias="TOLID_PROD_BASE_URL",
+    )
 
 @lru_cache(maxsize=1)
 def get_settings() -> BrokerSettings:

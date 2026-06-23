@@ -59,9 +59,9 @@ def _make_retry_decorator(settings: BrokerSettings):
 
 
 class ENAClient:
-    def __init__(self, settings: BrokerSettings) -> None:
+    def __init__(self, settings: BrokerSettings, base_url: str | None = None) -> None:
         self._settings = settings
-        self._url = str(settings.ena_base_url).rstrip("/")
+        self._url = str(base_url or settings.ena_dev_base_url).rstrip("/")
         self._auth = (settings.webin_username, settings.webin_password)
         self._receipt_parser = ReceiptParser()
         self._client = httpx.Client(
