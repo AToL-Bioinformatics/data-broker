@@ -30,6 +30,10 @@ def make_item(**overrides) -> ToLIDWorkItem:
 
 
 def make_service() -> tuple[ToLIDService, dict[str, MagicMock]]:
+    return make_service_with_reporting(report_to_canopy=True)
+
+
+def make_service_with_reporting(report_to_canopy: bool) -> tuple[ToLIDService, dict[str, MagicMock]]:
     mocks = {
         "canopy": MagicMock(),
         "tolid": MagicMock(),
@@ -41,6 +45,7 @@ def make_service() -> tuple[ToLIDService, dict[str, MagicMock]]:
         tolid_client=mocks["tolid"],
         ena_client=mocks["ena"],
         transform_service=mocks["transform"],
+        report_to_canopy=report_to_canopy,
     )
     return service, mocks
 
@@ -150,6 +155,22 @@ def test_process_pending_reports_assignment():
     payload = mocks["canopy"].report_tolid.call_args.args[1]
     assert payload.status == ToLIDStatus.ASSIGNED
     assert payload.last_requested_at == now
+
+
+def test_process_sample_accession_skips_canopy_reporting_in_dev_mode():
+    service, mocks = make_service_with_reporting(report_to_canopy=False)
+    item = make_item()
+    mocks["canopy"].get_tolid_by_specimen_accession.return_value = item
+    mocks["tolid"].request_tolid.return_value = ToLIDLookupResult(
+        status="assigned",
+        tolid="mMacGis1",
+    )
+
+    result = service.process_sample_accession("ERS123", update_ena=False)
+
+    assert result.status == ToLIDStatus.ASSIGNED
+    assert result.tolid == "mMacGis1"
+    mocks["canopy"].report_tolid.assert_not_called()
 
 
 def test_process_sample_accession_uses_sample_payload_for_ena_modify():

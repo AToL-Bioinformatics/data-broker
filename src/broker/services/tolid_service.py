@@ -51,11 +51,13 @@ class ToLIDService:
         tolid_client: ToLIDClient,
         ena_client: ENAClient,
         transform_service: TransformService,
+        report_to_canopy: bool = True,
     ) -> None:
         self._canopy = canopy_client
         self._tolid = tolid_client
         self._ena = ena_client
         self._transform = transform_service
+        self._report_to_canopy = report_to_canopy
 
     def process_sample_accession(
         self,
@@ -116,7 +118,7 @@ class ToLIDService:
 
         if lookup.status == "pending":
             request_id = lookup.request_id or item.request_id
-            self._canopy.report_tolid(
+            self._report_tolid(
                 item.sample_id,
                 ToLIDReportPayload(
                     status=ToLIDStatus.PENDING,
@@ -164,7 +166,7 @@ class ToLIDService:
                     exc,
                 )
 
-        self._canopy.report_tolid(
+        self._report_tolid(
             item.sample_id,
             ToLIDReportPayload(
                 status=ToLIDStatus.ASSIGNED,
@@ -183,6 +185,19 @@ class ToLIDService:
             ena_updated=ena_updated,
             note=ena_error,
         )
+
+    def _report_tolid(self, sample_id: str, payload: ToLIDReportPayload) -> None:
+        # Temporary policy: dev ToLID responses are not written back to Canopy
+        # because they may contain dummy or transient identifiers. To allow
+        # reporting in dev again later, pass report_to_canopy=True when wiring
+        # this service in the CLI.
+        if not self._report_to_canopy:
+            logger.info(
+                "Skipping Canopy ToLID report for sample %s because broker is running in dev mode",
+                sample_id,
+            )
+            return
+        self._canopy.report_tolid(sample_id, payload)
 
     def _request_tolid(self, item: ToLIDWorkItem) -> ToLIDLookupResult:
         logger.info(

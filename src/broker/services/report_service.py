@@ -38,8 +38,9 @@ _REPORTABLE_STATUSES = frozenset(_STATUS_MAP.keys())
 
 
 class ReportService:
-    def __init__(self, canopy_client: CanopyClient) -> None:
+    def __init__(self, canopy_client: CanopyClient, enabled: bool = True) -> None:
         self._canopy = canopy_client
+        self._enabled = enabled
 
     def report_attempt(self, attempt: AttemptState) -> None:
         """Batch-report ALL reportable entity outcomes for an attempt.
@@ -55,6 +56,12 @@ class ReportService:
         propagating.  It never raises.
         """
         if attempt.attempt_id is None:
+            return
+        if not self._enabled:
+            logger.info(
+                "Skipping Canopy outcome report for attempt %s because broker is running in dev mode",
+                attempt.attempt_id,
+            )
             return
 
         results: list[ReportResult] = []

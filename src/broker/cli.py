@@ -75,7 +75,7 @@ def submit_ready(
         Optional[str],
         typer.Option(
             "--hold-until",
-            help="ENA release date in ISO 8601 format (e.g. 2026-01-01). Applied to projects and samples.",
+            help="Required for now: ENA release date in ISO 8601 format (e.g. 2026-01-01). Applied to projects and samples.",
         ),
     ] = None,
     # Accession overrides (used when --only is set without full dependency chain)
@@ -93,7 +93,7 @@ def submit_ready(
     """Submit all ready entities for a taxonomy ID, in dependency order."""
     from broker.errors import BrokerError
 
-    _validate_hold_until(hold_until)
+    hold_until = _normalize_hold_until(hold_until)
 
     only_type: EntityType | None = None
     if only is not None:
@@ -141,7 +141,10 @@ def submit_entity(
     ] = False,
     hold_until: Annotated[
         Optional[str],
-        typer.Option("--hold-until", help="ENA release date ISO 8601 (e.g. 2026-01-01). For projects and samples only."),
+        typer.Option(
+            "--hold-until",
+            help="Required for now: ENA release date ISO 8601 (e.g. 2026-01-01). For projects and samples only.",
+        ),
     ] = None,
 ) -> None:
     """Submit a single entity by type and ID.
@@ -152,7 +155,7 @@ def submit_entity(
     """
     from broker.errors import BrokerError
 
-    _validate_hold_until(hold_until)
+    hold_until = _normalize_hold_until(hold_until)
     entity_type = _parse_entity_type(type_)
     submission_mode = _resolve_submission_mode(dry_run, False)
     cli_overrides = _build_cli_overrides(project_accession, sample_accession, experiment_accession)
@@ -223,7 +226,7 @@ def submit_batch(
     ] = False,
     hold_until: Annotated[
         Optional[str],
-        typer.Option("--hold-until", help="ENA release date ISO 8601 (e.g. 2026-01-01). For projects and samples only."),
+        typer.Option("--hold-until", help="Required for now: ENA release date ISO 8601 (e.g. 2026-01-01). For projects and samples only."),
     ] = None,
 ) -> None:
     """Submit specific entities by ID, across one or more entity types.
@@ -255,7 +258,7 @@ def submit_batch(
     """
     from broker.errors import BrokerError
 
-    _validate_hold_until(hold_until)
+    hold_until = _normalize_hold_until(hold_until)
     submission_mode = _resolve_submission_mode(dry_run, False)
     cli_overrides = _build_cli_overrides(project_accession, sample_accession, experiment_accession)
 
@@ -471,7 +474,7 @@ def _build_orchestrator(submission_mode: SubmissionMode, prod: bool = False):
     transform_service = TransformService(webin_account=settings.webin_username)
     receipt_parser = ReceiptParser()
     prereq_validator = PrerequisiteValidator()
-    report_service = ReportService(canopy_client)
+    report_service = ReportService(canopy_client, enabled=prod)
 
     submission_service = SubmissionService(
         ena_client=ena_client,
@@ -514,7 +517,7 @@ def _build_resume_service(prod: bool = False):
     transform_service = TransformService(webin_account=settings.webin_username)
     receipt_parser = ReceiptParser()
     prereq_validator = PrerequisiteValidator()
-    report_service = ReportService(canopy_client)
+    report_service = ReportService(canopy_client, enabled=prod)
 
     submission_service = SubmissionService(
         ena_client=ena_client,
@@ -558,6 +561,7 @@ def _build_tolid_service(prod: bool = False):
         ),
         ena_client=ENAClient(settings, base_url=settings.ena_prod_base_url if prod else settings.ena_dev_base_url),
         transform_service=TransformService(webin_account=settings.webin_username),
+        report_to_canopy=prod,
     )
 
 
@@ -724,6 +728,22 @@ def _validate_hold_until(hold_until: str | None) -> None:
             f"Use the format YYYY-MM-DD, e.g. 2026-01-01"
         )
         raise typer.Exit(code=1)
+
+
+def _normalize_hold_until(hold_until: str | None) -> str:
+    """Temporary policy: require --hold-until on new submission commands.
+
+    To make hold dates optional again later, remove the None check here and
+    keep the existing _validate_hold_until() format validation in place.
+    """
+    if hold_until is None:
+        err_console.print(
+            "[ERROR] --hold-until is currently required for new submissions. "
+            "Use the format YYYY-MM-DD, e.g. 2026-01-01"
+        )
+        raise typer.Exit(code=1)
+    _validate_hold_until(hold_until)
+    return hold_until
 
 
 def _parse_id_csv(value: str | None) -> list[str]:
