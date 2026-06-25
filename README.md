@@ -2,6 +2,11 @@
 
 A Python CLI tool that fetches submission-ready genomic metadata from the Canopy API and submits it to the [European Nucleotide Archive (ENA)](https://www.ebi.ac.uk/ena) on behalf of ATOL organisms.
 
+## Documentation
+
+- [Handover guide](docs/handover.md)
+- [Operator runbook](docs/runbook.md)
+
 ---
 
 ## Table of contents
@@ -29,14 +34,14 @@ A Python CLI tool that fetches submission-ready genomic metadata from the Canopy
 
 ## Features
 
-- **Bulk submission** by taxonomy ID — all ready entities in dependency order (`project → sample → experiment → run`)
+- **Bulk submission** by taxonomy ID — all ready entities (meaning all rows in Canopy's `*_submission` tables where `stats` = `ready`) in dependency order (`project → sample → experiment → run`)
 - **Partial scope** — `--only samples` to submit one entity type at a time
 - **Targeted submission** — one entity by type and Canopy UUID
 - **Batch submission** — a specific set of entity IDs across types, inline or from a JSON file
 - **Prerequisite validation** — fails immediately with a clear error if required accessions are missing; never silently auto-submits dependencies
 - **Crash-safe state** — atomic writes after every checkpoint; safe to interrupt and resume at any point
 - **Resume** — re-submits non-terminal entities from persisted state without re-calling Canopy
-- **Canopy reporting** — every entity outcome is reported back to Canopy (`/reports/{attempt_id}`) after submission
+- **Canopy reporting** — enabled only in `--prod`; dev/staging runs do not write dummy ENA or ToLID values back to Canopy
 - **ToLID workflows** — request or poll Tree of Life IDs from Canopy-backed ToLID rows
 - **Hold dates** — ENA embargo date on projects and samples via `--hold-until`
 - **Dry run** mode for safe pre-flight checks
@@ -86,7 +91,7 @@ cp .env.example .env
 | `TOLID_DEV_BASE_URL` | | staging server | ToLID dev/staging API base URL |
 | `TOLID_PROD_BASE_URL` | | prod server | ToLID production API base URL |
 
-**ENA environments:**
+**ENA servers:**
 
 ```bash
 # Dev server — safe for testing (submissions do not go live)
@@ -97,6 +102,8 @@ ENA_PROD_BASE_URL=https://www.ebi.ac.uk/ena/submit/drop-box/submit/
 ```
 
 The broker uses the **dev server** by default. Pass `--prod` on the CLI to switch to `ENA_PROD_BASE_URL`.
+
+Important: in default dev/staging mode, submission outcomes are intentionally **not** reported back to Canopy. This avoids saving dummy or temporary values returned by the ENA dev service.
 
 **ToLID environments:**
 
@@ -110,28 +117,31 @@ TOLID_PROD_BASE_URL=https://id.tol.sanger.ac.uk
 
 The broker uses the **staging/dev ToLID server** by default. Pass `--prod` on the CLI to switch to `TOLID_PROD_BASE_URL`.
 
+Important: in default dev/staging mode, ToLID request outcomes are intentionally **not** reported back to Canopy. This avoids saving temporary or non-production ToLIDs. If we later want dev-mode reporting for testing, we can relax this policy in the CLI service wiring.
+
 ---
 
 ## Commands
 
 ### `submit ready`
 
-Claim and submit every entity Canopy has marked ready for a given taxonomy ID, in dependency order.
+Claim and submit every entity Canopy has marked ready (in `*_submission`) for a given taxonomy ID, in dependency order.
 
 ```bash
-broker submit ready --tax-id 9606
+broker submit ready --tax-id 9606 --hold-until 2027-01-01
 
 # Use production ENA and ToLID servers
-broker submit ready --tax-id 9606 --prod
+broker submit ready --tax-id 9606 --hold-until 2027-01-01 --prod
 ```
 
 **Filter to one entity type** (`--only`):
 
 ```bash
-broker submit ready --tax-id 9606 --only samples
+broker submit ready --tax-id 9606 --only samples --hold-until 2027-01-01
 
-# When prerequisites are not in the Canopy payload, supply them via flags:
+# When prerequisite accessions are not in the Canopy payload, supply them via flags:
 broker submit ready --tax-id 9606 --only experiments \
+  --hold-until 2027-01-01 \
   --project-accession PRJEB12345 \
   --sample-accession ERS123456
 ```
@@ -146,7 +156,7 @@ Valid `--only` values: `projects`, `samples`, `experiments`, `runs`.
 |---|---|
 | `--tax-id` | Taxonomy ID (required) |
 | `--only` | Restrict to one entity type |
-| `--hold-until YYYY-MM-DD` | ENA embargo date for projects and samples |
+| `--hold-until YYYY-MM-DD` | Required for now. ENA embargo date for projects and samples |
 | `--project-accession` | Override or supply project accession |
 | `--sample-accession` | Override or supply sample accession |
 | `--experiment-accession` | Override or supply experiment accession |
@@ -162,19 +172,19 @@ Claim and submit one specific entity by type and Canopy UUID.
 
 ```bash
 # Project — no prerequisites needed
-broker submit entity --type project --id <uuid>
+broker submit entity --type project --id <uuid> --hold-until 2027-06-30
 
 # Sample
-broker submit entity --type sample --id <uuid> \
+broker submit entity --type sample --id <uuid> --hold-until 2027-06-30 \
   --project-accession PRJEB12345
 
 # Experiment
-broker submit entity --type experiment --id <uuid> \
+broker submit entity --type experiment --id <uuid> --hold-until 2027-06-30 \
   --project-accession PRJEB12345 \
   --sample-accession ERS123456
 
 # Run
-broker submit entity --type run --id <uuid> \
+broker submit entity --type run --id <uuid> --hold-until 2027-06-30 \
   --experiment-accession ERX222222
 ```
 
@@ -189,7 +199,7 @@ Valid `--type` values: `project`, `sample`, `experiment`, `run`.
 | `--project-accession` | Override or supply project accession |
 | `--sample-accession` | Override or supply sample accession |
 | `--experiment-accession` | Override or supply experiment accession |
-| `--hold-until YYYY-MM-DD` | ENA embargo date (projects and samples only) |
+| `--hold-until YYYY-MM-DD` | Required for now. ENA embargo date (projects and samples only) |
 | `--dry-run` | Build XML but do not call ENA |
 | `--prod` | Use production ENA and ToLID servers instead of dev/staging |
 
@@ -202,19 +212,20 @@ Claim and submit a hand-picked set of entities by ID. Accepts IDs inline or from
 #### Inline — comma-separated IDs per type
 
 ```bash
-broker submit batch --samples abc-123,def-456 --experiments xyz-789
+broker submit batch --samples abc-123,def-456 --experiments xyz-789 --hold-until 2027-06-30
 
 # Multiple types
 broker submit batch \
   --projects p-uuid \
   --samples  s-uuid-1,s-uuid-2 \
-  --runs     r-uuid-1,r-uuid-2,r-uuid-3
+  --runs     r-uuid-1,r-uuid-2,r-uuid-3 \
+  --hold-until 2027-06-30
 ```
 
 #### From a JSON file
 
 ```bash
-broker submit batch --from-file batch.json
+broker submit batch --from-file batch.json --hold-until 2027-06-30
 ```
 
 **`batch.json` format:**
@@ -233,10 +244,10 @@ Any key can be omitted if you have no entities of that type.
 #### Combined — file as base, inline adds more
 
 ```bash
-broker submit batch --from-file batch.json --runs extra-run-id
+broker submit batch --from-file batch.json --runs extra-run-id --hold-until 2027-06-30
 
 # Run the batch against the production ENA server
-broker submit batch --from-file batch.json --prod
+broker submit batch --from-file batch.json --hold-until 2027-06-30 --prod
 ```
 
 Duplicate IDs across file and inline flags are de-duplicated automatically.
@@ -253,7 +264,7 @@ Duplicate IDs across file and inline flags are de-duplicated automatically.
 | `--project-accession` | Override or supply project accession |
 | `--sample-accession` | Override or supply sample accession |
 | `--experiment-accession` | Override or supply experiment accession |
-| `--hold-until YYYY-MM-DD` | ENA embargo date (projects and samples only) |
+| `--hold-until YYYY-MM-DD` | Required for now. ENA embargo date (projects and samples only) |
 | `--dry-run` | Build XML but do not call ENA |
 | `--prod` | Use production ENA and ToLID servers instead of dev/staging |
 
@@ -286,18 +297,18 @@ Request a Tree of Life ID for one specimen-level ENA sample accession.
 ```bash
 broker tolid request --sample-accession ERS123456
 
-# Fetch the ToLID and also send MODIFY back to ENA
+# Fetch the ToLID and also send MODIFY back to ENA to modify the appropriate sample
 broker tolid request --sample-accession ERS123456 --update-ena
 
 # Use the production ToLID and ENA servers
 broker tolid request --sample-accession ERS123456 --prod
 ```
 
-This command asks Canopy to look up the specimen sample by ENA sample accession, then calls the Sanger ToLID API once for that sample. The result reported back to Canopy is either:
+This command asks Canopy to look up the specimen sample by ENA sample accession, then calls the Sanger ToLID API once for that sample. In `--prod`, the result reported back to Canopy is either:
 - `assigned` with a real ToLID
 - `pending` with a request ID and updated `last_requested_at`
 
-By default this command does not send an ENA `MODIFY`. If `--update-ena` is enabled and a ToLID is assigned, the broker also attempts an ENA `MODIFY` submission to add the `tolid` sample attribute. The ToLID is still reported back to Canopy even if ENA `MODIFY` fails.
+By default this command does not send an ENA `MODIFY`. If `--update-ena` is enabled and a ToLID is assigned, the broker also attempts an ENA `MODIFY` submission to add the `tolid` sample attribute. In `--prod`, the ToLID is still reported back to Canopy even if ENA `MODIFY` fails.
 
 **All flags:**
 
@@ -358,7 +369,7 @@ The sections below describe what each CLI command actually does internally, in o
    - mark the entity `SUBMITTED` and save state
    - in `--dry-run`, mark it `SKIPPED` and stop there
    - otherwise build ENA XML, submit to ENA, save the raw receipt, then mark `SUCCEEDED` or `FAILED`
-8. After iteration finishes or aborts, batch-report entity outcomes back to Canopy and finalise the claim lease.
+8. After iteration finishes or aborts, batch-report entity outcomes back to Canopy only in `--prod`, then finalise the claim lease.
 9. Recompute overall attempt status, save the final state, render the Rich table, and exit non-zero on `failed` or `partial`.
 
 `--only` changes step 3 and step 7:
@@ -372,7 +383,7 @@ The sections below describe what each CLI command actually does internally, in o
 3. Call `CanopyClient.claim_entity()` for the specific entity.
 4. Build and save a targeted-mode `AttemptState`.
 5. Submit the claimed entity through the same per-entity lifecycle as `submit ready`.
-6. Report the outcome to Canopy, finalise the claim, save final state, render the result table, and exit non-zero on failure.
+6. In `--prod`, report the outcome to Canopy; in dev/staging, skip reporting. Finalise the claim, save final state, render the result table, and exit non-zero on failure.
 
 Key difference from `submit ready`: state fallback is always disabled. Missing prerequisites must come from the claimed payload or explicit CLI flags.
 
@@ -385,7 +396,7 @@ Key difference from `submit ready`: state fallback is always disabled. Missing p
 5. Call `CanopyClient.claim_batch()` with the selected IDs.
 6. Build and save a targeted-mode `AttemptState` containing all claimed entities.
 7. Submit each claimed entity through the same per-entity lifecycle used by the other submission commands.
-8. Report outcomes to Canopy, finalise the claim, save final state, render the result table, and exit non-zero on failure.
+8. In `--prod`, report outcomes to Canopy; in dev/staging, skip reporting. Finalise the claim, save final state, render the result table, and exit non-zero on failure.
 
 Like `submit entity`, batch mode disables state fallback. Prerequisites must already exist in the payload or be supplied via CLI flags.
 
@@ -400,7 +411,7 @@ Like `submit entity`, batch mode disables state fallback. Prerequisites must alr
    - targeted and batch attempts do not
 6. Revisit entities in canonical dependency order and skip terminal ones (`SUCCEEDED`, `SKIPPED`).
 7. Re-submit every non-terminal entity through the same submission lifecycle used in a normal run.
-8. Report all reportable entity outcomes to Canopy, including entities that were already terminal before resume started.
+8. In `--prod`, report all reportable entity outcomes to Canopy, including entities that were already terminal before resume started. In dev/staging, skip that report.
 9. Finalise the claim, recompute attempt status, save state, render results, and exit non-zero on failure.
 
 ### `broker tolid request`
@@ -409,8 +420,8 @@ Like `submit entity`, batch mode disables state fallback. Prerequisites must alr
 2. Build the Canopy, ToLID, and ENA clients and verify `TOLID_API_KEY` is configured.
 3. Call `CanopyClient.get_tolid_by_specimen_accession()` to fetch the specimen sample metadata needed for the ToLID request.
 4. Call the Sanger ToLID `POST /api/v3/request/create` endpoint using `specimen_id`, `taxon_id`, and optional `scientific_name`.
-5. If the response is `pending`, report `pending` plus `request_id` and `last_requested_at` back to Canopy.
-6. If the response is `assigned`, optionally send ENA `MODIFY`, then report `assigned` plus the new `tolid` back to Canopy.
+5. If the response is `pending`, then in `--prod` report `pending` plus `request_id` and `last_requested_at` back to Canopy.
+6. If the response is `assigned`, optionally send ENA `MODIFY`, then in `--prod` report `assigned` plus the new `tolid` back to Canopy.
 7. Render a ToLID results table and exit non-zero if the request returned an error.
 
 ### `broker tolid poll`
@@ -420,8 +431,8 @@ Like `submit entity`, batch mode disables state fallback. Prerequisites must alr
 3. Call `CanopyClient.list_pending_tolids()` to fetch rows in `pending` state.
 4. For each returned row:
    - re-post the same Sanger ToLID `POST /api/v3/request/create` call
-   - if the response remains `pending`, report the refreshed `request_id` and `last_requested_at` back to Canopy
-   - if the response is `assigned`, optionally send ENA `MODIFY`, then report `assigned` plus the new `tolid` back to Canopy
+   - if the response remains `pending`, then in `--prod` report the refreshed `request_id` and `last_requested_at` back to Canopy
+   - if the response is `assigned`, optionally send ENA `MODIFY`, then in `--prod` report `assigned` plus the new `tolid` back to Canopy
 5. Render a ToLID results table and exit non-zero if any request returned an error.
 
 Unlike the submission commands, the ToLID commands do not use broker attempt state as their source of truth. Canopy owns the durable ToLID rows, and the broker acts only as the ToLID worker.
@@ -435,7 +446,7 @@ This is the end-to-end flow for normal submission of metadata into ENA.
 1. Broker claims submission-ready entities from Canopy.
 2. Broker builds a local `AttemptState` from the claim response and saves it.
 3. Broker processes entities in dependency order: `project -> sample -> experiment -> run`.
-4. Before each submission, the broker resolves prerequisite accessions from:
+4. Before each submission, the broker resolves [prerequisite accessions](#prerequisite-accessions) from:
    - CLI override flags
    - Canopy prerequisites in the claim payload
    - previously succeeded entities in the same bulk attempt, when state fallback is allowed
@@ -443,7 +454,7 @@ This is the end-to-end flow for normal submission of metadata into ENA.
 6. Broker builds the ENA `SUBMISSION` XML wrapper, including `HOLD` for projects and samples when `--hold-until` is set.
 7. Broker submits the XML to the ENA Webin drop-box.
 8. Broker stores the raw ENA receipt and updates the entity state to `SUCCEEDED` or `FAILED`.
-9. After the run completes, broker reports all outcomes back to Canopy and finalises the Canopy claim.
+9. After the run completes, broker reports all outcomes back to Canopy only in `--prod`, and finalises the Canopy claim in both modes.
 10. Optional ToLID work happens later via `broker tolid request` or `broker tolid poll`, not during the per-entity ENA submission lifecycle.
 
 ---
@@ -486,16 +497,18 @@ broker submit batch  --projects <id> --hold-until 2027-06-30
 
 Format: `YYYY-MM-DD`. The hold date is stored in the attempt state file so `broker resume` preserves the original date.
 
+Temporary policy: `--hold-until` is currently required on `submit ready`, `submit entity`, and `submit batch`, even for experiments and runs where the HOLD action does not change the ENA XML. This is intentionally enforced in the CLI for now. If we later want to make it optional again for testing, relax the CLI guard and keep the existing date-format validation.
+
 ---
 
 ## Dry run and validate-only
 
 ```bash
 # Dry run — claims from Canopy, builds XML, but does NOT call ENA or report back
-broker submit ready --tax-id 9606 --dry-run
+broker submit ready --tax-id 9606 --hold-until 2027-01-01 --dry-run
 
 # Validate only — accepted by the CLI, but not yet fully wired as a submission bypass
-broker submit ready --tax-id 9606 --validate-only
+broker submit ready --tax-id 9606 --hold-until 2027-01-01 --validate-only
 ```
 
 `--dry-run` and `--validate-only` are mutually exclusive.
@@ -630,7 +643,7 @@ mypy src/
 
 Tests use `pytest-httpx` to mock all HTTP calls — no real network or credentials needed.
 
-### Adding a new entity type
+### Adding a new entity type (e.g. if we decide to use the broker to submit assemblies later)
 
 1. Add the value to `EntityType` in `enums.py` and `ENTITY_DEPENDENCY_ORDER`
 2. Add prerequisite rules in `prerequisite_validation.py` (`_PREREQUISITES`, `_FIELD_TO_TYPE`)
