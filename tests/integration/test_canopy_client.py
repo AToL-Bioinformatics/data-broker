@@ -279,7 +279,7 @@ def test_claim_by_tax_id_body_contains_tax_id(httpx_mock):
     client.claim_by_tax_id("10090")
     claim_req = httpx_mock.get_requests()[1]
     body = json.loads(claim_req.content)
-    assert body["tax_id"] == "10090"
+    assert body["taxon_id"] == "10090"
 
 
 def test_claim_by_tax_id_with_entity_type_filter(httpx_mock):
