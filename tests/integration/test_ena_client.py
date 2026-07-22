@@ -25,8 +25,8 @@ PROJECT_FAILURE_RECEIPT = """<?xml version="1.0" encoding="UTF-8"?>
 
 def make_settings() -> BrokerSettings:
     return BrokerSettings(
-        WEBIN_USERNAME="Webin-test",
-        WEBIN_PASSWORD="secret",
+        WEBIN_USER="Webin-test",
+        WEBIN_PASS="secret",
         CANOPY_BASE_URL="http://canopy.test",
         CANOPY_USERNAME="user@example.com",
         CANOPY_PASSWORD="hunter2",

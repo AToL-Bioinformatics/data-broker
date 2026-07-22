@@ -25,8 +25,8 @@ from broker.models.canopy import (
 
 def make_settings() -> BrokerSettings:
     return BrokerSettings(
-        WEBIN_USERNAME="Webin-test",
-        WEBIN_PASSWORD="secret",
+        WEBIN_USER="Webin-test",
+        WEBIN_PASS="secret",
         CANOPY_BASE_URL="http://canopy.test",
         CANOPY_USERNAME="user@example.com",
         CANOPY_PASSWORD="hunter2",
@@ -279,7 +279,7 @@ def test_claim_by_tax_id_body_contains_tax_id(httpx_mock):
     client.claim_by_tax_id("10090")
     claim_req = httpx_mock.get_requests()[1]
     body = json.loads(claim_req.content)
-    assert body["tax_id"] == "10090"
+    assert body["taxon_id"] == "10090"
 
 
 def test_claim_by_tax_id_with_entity_type_filter(httpx_mock):

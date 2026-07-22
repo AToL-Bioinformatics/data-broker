@@ -1,8 +1,8 @@
 """Broker configuration via environment variables or .env file.
 
 Required variables:
-  WEBIN_USERNAME      ENA Webin account username (e.g. Webin-12345)
-  WEBIN_PASSWORD      ENA Webin account password
+  WEBIN_USER          ENA Webin account username (e.g. Webin-12345)
+  WEBIN_PASS          ENA Webin account password
   CANOPY_BASE_URL     Base URL of the Canopy API
   CANOPY_USERNAME     Canopy login username
   CANOPY_PASSWORD     Canopy login password
@@ -10,8 +10,8 @@ Required variables:
 Optional variables (defaults shown):
   ENA_DEV_BASE_URL    ENA dev drop-box submit endpoint
   ENA_PROD_BASE_URL   ENA prod drop-box submit endpoint
-  BROKER_STATE_DIR    Where to store attempt state JSON files (~/.broker/state)
-  BROKER_RECEIPT_DIR  Where to store raw ENA receipts (~/.broker/receipts)
+  BROKER_STATE_DIR    Where to store attempt state JSON files (~/.cache/broker/state)
+  BROKER_RECEIPT_DIR  Where to store raw ENA receipts (~/.cache/broker/receipts)
   HTTP_TIMEOUT_SECONDS   Per-request timeout in seconds (30.0)
   HTTP_MAX_RETRIES       Max retry attempts for transient HTTP errors (3)
   HTTP_RETRY_MIN_WAIT    Minimum retry backoff in seconds (1.0)
@@ -24,8 +24,9 @@ ToLID (optional — ToLID requests are skipped when TOLID_API_KEY is not set):
 """
 
 from __future__ import annotations
-
 from functools import lru_cache
+import os
+from pathlib import Path
 
 from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -40,8 +41,8 @@ class BrokerSettings(BaseSettings):
     )
 
     # ENA credentials
-    webin_username: str = Field(alias="WEBIN_USERNAME")
-    webin_password: str = Field(alias="WEBIN_PASSWORD")
+    webin_username: str = Field(alias="WEBIN_USER")
+    webin_password: str = Field(alias="WEBIN_PASS")
     ena_dev_base_url: str = Field(
         default="https://wwwdev.ebi.ac.uk/ena/submit/drop-box/submit/",
         validation_alias=AliasChoices("ENA_DEV_BASE_URL", "ENA_BASE_URL"),
@@ -57,8 +58,19 @@ class BrokerSettings(BaseSettings):
     canopy_password: str = Field(alias="CANOPY_PASSWORD")
 
     # Storage paths
-    state_dir: str = Field(default="~/.broker/state", alias="BROKER_STATE_DIR")
-    receipt_dir: str = Field(default="~/.broker/receipts", alias="BROKER_RECEIPT_DIR")
+    state_dir: str = Field(
+        default=Path(
+            os.getenv("XDG_CACHE_HOME", os.path.expanduser("~/.cache")), "broker/state"
+        ).as_posix(),
+        alias="BROKER_STATE_DIR",
+    )
+    receipt_dir: str = Field(
+        Path(
+            os.getenv("XDG_CACHE_HOME", os.path.expanduser("~/.cache")),
+            "broker/receipts",
+        ).as_posix(),
+        alias="BROKER_RECEIPT_DIR",
+    )
 
     # HTTP behaviour
     http_timeout_seconds: float = Field(default=30.0, alias="HTTP_TIMEOUT_SECONDS")
@@ -76,6 +88,7 @@ class BrokerSettings(BaseSettings):
         default="https://id.tol.sanger.ac.uk",
         alias="TOLID_PROD_BASE_URL",
     )
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> BrokerSettings:
