@@ -65,7 +65,7 @@ class BrokerSettings(BaseSettings):
         alias="BROKER_STATE_DIR",
     )
     receipt_dir: str = Field(
-        Path(
+        default=Path(
             os.getenv("XDG_CACHE_HOME", os.path.expanduser("~/.cache")),
             "broker/receipts",
         ).as_posix(),
