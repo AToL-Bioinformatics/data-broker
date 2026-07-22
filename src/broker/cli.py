@@ -35,7 +35,7 @@ from broker.enums import EntityType, SubmissionMode
 
 app = typer.Typer(
     name="broker",
-    help="ENA submission broker — submits genomic metadata to ENA on behalf of Canopy.",
+    help="ENA submission broker — submits metadata to ENA on behalf of Canopy.",
     no_args_is_help=True,
     add_completion=False,
 )
@@ -55,6 +55,33 @@ logging.basicConfig(
 
 
 # ---------------------------------------------------------------------------
+# broker version
+# ---------------------------------------------------------------------------
+
+
+def version_callback(value: bool):
+    if value:
+        import importlib.metadata
+
+        version = importlib.metadata.version("broker")
+
+        typer.echo(f"atol-data-broker version {version}")
+        raise typer.Exit()
+
+
+@app.callback()
+def common(
+    version: bool = typer.Option(
+        None, "--version", help="Print the version and exit.", callback=version_callback
+    ),
+):
+    pass
+
+
+if __name__ == "__main__":
+    app()
+
+# ---------------------------------------------------------------------------
 # broker submit ready
 # ---------------------------------------------------------------------------
 
@@ -69,8 +96,18 @@ def submit_ready(
             help="Submit only this entity type: projects | samples | experiments | runs",
         ),
     ] = None,
-    dry_run: Annotated[bool, typer.Option("--dry-run", help="Print what would be submitted, without calling ENA")] = False,
-    validate_only: Annotated[bool, typer.Option("--validate-only", help="Run Canopy validation checks only; do not submit")] = False,
+    dry_run: Annotated[
+        bool,
+        typer.Option(
+            "--dry-run", help="Print what would be submitted, without calling ENA"
+        ),
+    ] = False,
+    validate_only: Annotated[
+        bool,
+        typer.Option(
+            "--validate-only", help="Run Canopy validation checks only; do not submit"
+        ),
+    ] = False,
     hold_until: Annotated[
         Optional[str],
         typer.Option(
@@ -79,9 +116,18 @@ def submit_ready(
         ),
     ] = None,
     # Accession overrides (used when --only is set without full dependency chain)
-    project_accession: Annotated[Optional[str], typer.Option("--project-accession", help="Project/study accession (PRJEB*)")] = None,
-    sample_accession: Annotated[Optional[str], typer.Option("--sample-accession", help="Sample accession (ERS*)")] = None,
-    experiment_accession: Annotated[Optional[str], typer.Option("--experiment-accession", help="Experiment accession (ERX*)")] = None,
+    project_accession: Annotated[
+        Optional[str],
+        typer.Option("--project-accession", help="Project/study accession (PRJEB*)"),
+    ] = None,
+    sample_accession: Annotated[
+        Optional[str],
+        typer.Option("--sample-accession", help="Sample accession (ERS*)"),
+    ] = None,
+    experiment_accession: Annotated[
+        Optional[str],
+        typer.Option("--experiment-accession", help="Experiment accession (ERX*)"),
+    ] = None,
     prod: Annotated[
         bool,
         typer.Option(
@@ -100,7 +146,9 @@ def submit_ready(
         only_type = _parse_entity_type_plural(only)
 
     submission_mode = _resolve_submission_mode(dry_run, validate_only)
-    cli_overrides = _build_cli_overrides(project_accession, sample_accession, experiment_accession)
+    cli_overrides = _build_cli_overrides(
+        project_accession, sample_accession, experiment_accession
+    )
 
     try:
         orchestrator = _build_orchestrator(submission_mode=submission_mode, prod=prod)
@@ -126,11 +174,23 @@ def submit_ready(
 
 @submit_app.command("entity")
 def submit_entity(
-    type_: Annotated[str, typer.Option("--type", help="Entity type: project | sample | experiment | run")],
+    type_: Annotated[
+        str,
+        typer.Option("--type", help="Entity type: project | sample | experiment | run"),
+    ],
     id_: Annotated[str, typer.Option("--id", help="Entity ID in Canopy")],
-    project_accession: Annotated[Optional[str], typer.Option("--project-accession", help="Project accession (PRJEB*)")] = None,
-    sample_accession: Annotated[Optional[str], typer.Option("--sample-accession", help="Sample accession (ERS*)")] = None,
-    experiment_accession: Annotated[Optional[str], typer.Option("--experiment-accession", help="Experiment accession (ERX*)")] = None,
+    project_accession: Annotated[
+        Optional[str],
+        typer.Option("--project-accession", help="Project accession (PRJEB*)"),
+    ] = None,
+    sample_accession: Annotated[
+        Optional[str],
+        typer.Option("--sample-accession", help="Sample accession (ERS*)"),
+    ] = None,
+    experiment_accession: Annotated[
+        Optional[str],
+        typer.Option("--experiment-accession", help="Experiment accession (ERX*)"),
+    ] = None,
     dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
     prod: Annotated[
         bool,
@@ -158,7 +218,9 @@ def submit_entity(
     hold_until = _normalize_hold_until(hold_until)
     entity_type = _parse_entity_type(type_)
     submission_mode = _resolve_submission_mode(dry_run, False)
-    cli_overrides = _build_cli_overrides(project_accession, sample_accession, experiment_accession)
+    cli_overrides = _build_cli_overrides(
+        project_accession, sample_accession, experiment_accession
+    )
 
     try:
         orchestrator = _build_orchestrator(submission_mode=submission_mode, prod=prod)
@@ -186,7 +248,9 @@ def submit_entity(
 def submit_batch(
     projects: Annotated[
         Optional[str],
-        typer.Option("--projects", help="Comma-separated project IDs, e.g. uuid1,uuid2"),
+        typer.Option(
+            "--projects", help="Comma-separated project IDs, e.g. uuid1,uuid2"
+        ),
     ] = None,
     samples: Annotated[
         Optional[str],
@@ -213,9 +277,18 @@ def submit_batch(
             dir_okay=False,
         ),
     ] = None,
-    project_accession: Annotated[Optional[str], typer.Option("--project-accession", help="Project accession (PRJEB*)")] = None,
-    sample_accession: Annotated[Optional[str], typer.Option("--sample-accession", help="Sample accession (ERS*)")] = None,
-    experiment_accession: Annotated[Optional[str], typer.Option("--experiment-accession", help="Experiment accession (ERX*)")] = None,
+    project_accession: Annotated[
+        Optional[str],
+        typer.Option("--project-accession", help="Project accession (PRJEB*)"),
+    ] = None,
+    sample_accession: Annotated[
+        Optional[str],
+        typer.Option("--sample-accession", help="Sample accession (ERS*)"),
+    ] = None,
+    experiment_accession: Annotated[
+        Optional[str],
+        typer.Option("--experiment-accession", help="Experiment accession (ERX*)"),
+    ] = None,
     dry_run: Annotated[bool, typer.Option("--dry-run")] = False,
     prod: Annotated[
         bool,
@@ -226,7 +299,10 @@ def submit_batch(
     ] = False,
     hold_until: Annotated[
         Optional[str],
-        typer.Option("--hold-until", help="Required for now: ENA release date ISO 8601 (e.g. 2026-01-01). For projects and samples only."),
+        typer.Option(
+            "--hold-until",
+            help="Required for now: ENA release date ISO 8601 (e.g. 2026-01-01). For projects and samples only.",
+        ),
     ] = None,
 ) -> None:
     """Submit specific entities by ID, across one or more entity types.
@@ -260,7 +336,9 @@ def submit_batch(
 
     hold_until = _normalize_hold_until(hold_until)
     submission_mode = _resolve_submission_mode(dry_run, False)
-    cli_overrides = _build_cli_overrides(project_accession, sample_accession, experiment_accession)
+    cli_overrides = _build_cli_overrides(
+        project_accession, sample_accession, experiment_accession
+    )
 
     # Merge --from-file with inline flags
     project_ids = _parse_id_csv(projects)
@@ -276,7 +354,9 @@ def submit_batch(
         run_ids = list({*run_ids, *file_ids.get("runs", [])})
 
     if not any([project_ids, sample_ids, experiment_ids, run_ids]):
-        err_console.print("[ERROR] No entity IDs provided. Use --samples, --experiments, etc. or --from-file.")
+        err_console.print(
+            "[ERROR] No entity IDs provided. Use --samples, --experiments, etc. or --from-file."
+        )
         raise typer.Exit(code=1)
 
     try:
@@ -305,10 +385,18 @@ def submit_batch(
 
 @app.command("resume")
 def resume(
-    attempt_id: Annotated[str, typer.Option("--attempt-id", help="Attempt ID to resume")],
-    project_accession: Annotated[Optional[str], typer.Option("--project-accession")] = None,
-    sample_accession: Annotated[Optional[str], typer.Option("--sample-accession")] = None,
-    experiment_accession: Annotated[Optional[str], typer.Option("--experiment-accession")] = None,
+    attempt_id: Annotated[
+        str, typer.Option("--attempt-id", help="Attempt ID to resume")
+    ],
+    project_accession: Annotated[
+        Optional[str], typer.Option("--project-accession")
+    ] = None,
+    sample_accession: Annotated[
+        Optional[str], typer.Option("--sample-accession")
+    ] = None,
+    experiment_accession: Annotated[
+        Optional[str], typer.Option("--experiment-accession")
+    ] = None,
     prod: Annotated[
         bool,
         typer.Option(
@@ -325,7 +413,9 @@ def resume(
     """
     from broker.errors import BrokerError
 
-    cli_overrides = _build_cli_overrides(project_accession, sample_accession, experiment_accession)
+    cli_overrides = _build_cli_overrides(
+        project_accession, sample_accession, experiment_accession
+    )
 
     try:
         resume_svc = _build_resume_service(prod=prod)
@@ -402,7 +492,9 @@ def tolid_poll(
     ] = None,
     limit: Annotated[
         Optional[int],
-        typer.Option("--limit", help="Optional maximum number of pending ToLIDs to poll"),
+        typer.Option(
+            "--limit", help="Optional maximum number of pending ToLIDs to poll"
+        ),
     ] = None,
     update_ena: Annotated[
         bool,
@@ -466,7 +558,10 @@ def _build_orchestrator(submission_mode: SubmissionMode, prod: bool = False):
     settings = get_settings()
 
     canopy_client = CanopyClient(settings)
-    ena_client = ENAClient(settings, base_url=settings.ena_prod_base_url if prod else settings.ena_dev_base_url)
+    ena_client = ENAClient(
+        settings,
+        base_url=settings.ena_prod_base_url if prod else settings.ena_dev_base_url,
+    )
 
     state_store = StateStore(settings.state_dir)
     receipt_store = ReceiptStore(settings.receipt_dir)
@@ -509,7 +604,10 @@ def _build_resume_service(prod: bool = False):
     settings = get_settings()
 
     canopy_client = CanopyClient(settings)
-    ena_client = ENAClient(settings, base_url=settings.ena_prod_base_url if prod else settings.ena_dev_base_url)
+    ena_client = ENAClient(
+        settings,
+        base_url=settings.ena_prod_base_url if prod else settings.ena_dev_base_url,
+    )
 
     state_store = StateStore(settings.state_dir)
     receipt_store = ReceiptStore(settings.receipt_dir)
@@ -557,9 +655,14 @@ def _build_tolid_service(prod: bool = False):
         canopy_client=CanopyClient(settings),
         tolid_client=ToLIDClient(
             api_key=settings.tolid_api_key,
-            base_url=settings.tolid_prod_base_url if prod else settings.tolid_dev_base_url,
+            base_url=(
+                settings.tolid_prod_base_url if prod else settings.tolid_dev_base_url
+            ),
         ),
-        ena_client=ENAClient(settings, base_url=settings.ena_prod_base_url if prod else settings.ena_dev_base_url),
+        ena_client=ENAClient(
+            settings,
+            base_url=settings.ena_prod_base_url if prod else settings.ena_dev_base_url,
+        ),
         transform_service=TransformService(webin_account=settings.webin_username),
         report_to_canopy=prod,
     )
@@ -649,7 +752,11 @@ def _render_tolid_results(results, scope: str, update_ena: bool) -> None:
             row = [r.sample_id, r.specimen_id, str(r.status), r.tolid or ""]
             if update_ena:
                 if r.status == "assigned":
-                    row.append("[green]yes[/green]" if r.ena_updated else "[yellow]failed[/yellow]")
+                    row.append(
+                        "[green]yes[/green]"
+                        if r.ena_updated
+                        else "[yellow]failed[/yellow]"
+                    )
                 else:
                     row.append("")
             notes = r.note or ""
@@ -673,7 +780,9 @@ def _parse_entity_type(value: str) -> EntityType:
         return EntityType(value.lower())
     except ValueError:
         valid = ", ".join(et.value for et in EntityType)
-        err_console.print(f"[ERROR] Invalid entity type '{value}'. Valid types: {valid}")
+        err_console.print(
+            f"[ERROR] Invalid entity type '{value}'. Valid types: {valid}"
+        )
         raise typer.Exit(code=1)
 
 
@@ -688,14 +797,18 @@ def _parse_entity_type_plural(value: str) -> EntityType:
     result = mapping.get(value.lower())
     if result is None:
         valid = ", ".join(mapping.keys())
-        err_console.print(f"[ERROR] Invalid --only value '{value}'. Valid values: {valid}")
+        err_console.print(
+            f"[ERROR] Invalid --only value '{value}'. Valid values: {valid}"
+        )
         raise typer.Exit(code=1)
     return result
 
 
 def _resolve_submission_mode(dry_run: bool, validate_only: bool) -> SubmissionMode:
     if dry_run and validate_only:
-        err_console.print("[ERROR] --dry-run and --validate-only are mutually exclusive.")
+        err_console.print(
+            "[ERROR] --dry-run and --validate-only are mutually exclusive."
+        )
         raise typer.Exit(code=1)
     if dry_run:
         return SubmissionMode.DRY_RUN
@@ -769,11 +882,15 @@ def _load_batch_file(path: Path) -> dict[str, list[str]]:
         err_console.print(f"[ERROR] Could not read batch file '{path}': {exc}")
         raise typer.Exit(code=1)
     if not isinstance(data, dict):
-        err_console.print(f"[ERROR] Batch file must be a JSON object, got {type(data).__name__}")
+        err_console.print(
+            f"[ERROR] Batch file must be a JSON object, got {type(data).__name__}"
+        )
         raise typer.Exit(code=1)
     valid_keys = {"projects", "samples", "experiments", "runs"}
     unknown = set(data) - valid_keys
     if unknown:
-        err_console.print(f"[ERROR] Unknown keys in batch file: {sorted(unknown)}. Valid keys: {sorted(valid_keys)}")
+        err_console.print(
+            f"[ERROR] Unknown keys in batch file: {sorted(unknown)}. Valid keys: {sorted(valid_keys)}"
+        )
         raise typer.Exit(code=1)
     return {k: list(v) for k, v in data.items() if isinstance(v, list)}
