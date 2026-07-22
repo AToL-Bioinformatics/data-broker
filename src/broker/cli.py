@@ -35,7 +35,7 @@ from broker.enums import EntityType, SubmissionMode
 
 app = typer.Typer(
     name="broker",
-    help="ENA submission broker — submits metadata to ENA on behalf of Canopy.",
+    help="AToL data broker — submits metadata to ENA on behalf of Canopy.",
     no_args_is_help=True,
     add_completion=False,
 )
@@ -63,7 +63,7 @@ def version_callback(value: bool):
     if value:
         import importlib.metadata
 
-        version = importlib.metadata.version("broker")
+        version = importlib.metadata.version("atol-data-broker")
 
         typer.echo(f"atol-data-broker version {version}")
         raise typer.Exit()
