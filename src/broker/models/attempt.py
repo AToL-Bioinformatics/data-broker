@@ -32,6 +32,10 @@ class EntitySubmissionState(BaseModel):
     entity_type: EntityType
     status: EntitySubmissionStatus = EntitySubmissionStatus.PENDING
 
+    # Related project and sample UUIDs for maintaining entity relationships during submission
+    project_id: str | None = None
+    sample_id: str | None = None
+
     # Prerequisites resolved at runtime (CLI args > Canopy payload > state fallback)
     project_accession: str | None = None
     sample_accession: str | None = None

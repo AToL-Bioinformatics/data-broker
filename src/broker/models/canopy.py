@@ -72,6 +72,8 @@ class CanopyEntity(BaseModel):
         validation_alias=AliasChoices("tax_id", "taxon_id"),
     )
     scientific_name: str | None = None
+    project_id: str | None = None
+    sample_id: str | None = None
     payload: dict[str, Any]
     prerequisites: CanopyEntityPrerequisites | None = None
     files: list[CanopyEntityFile] = Field(default_factory=list)
