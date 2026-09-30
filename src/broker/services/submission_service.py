@@ -164,7 +164,7 @@ class SubmissionService:
             entity.mark_succeeded(
                 ena_accession=result.accessions.primary_accession,
                 biosample_accession=result.accessions.biosample_accession,
-            ) # TODO: this is where accessions are loaded into the AttemptState
+            )
             if result.accessions.biosample_accession is not None:
                 logger.info(
                     "Succeeded: %s %s → %s (%s)",
