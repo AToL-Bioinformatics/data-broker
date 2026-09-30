@@ -151,15 +151,15 @@ class PrerequisiteValidator:
                 ):
                     return e.ena_accession
 
-        if entity.entity_type == EntityType.EXPERIMENT and source_entity_type == EntityType.SAMPLE:
+        if source_entity_type == EntityType.SAMPLE:
             for e in attempt_state.entities.get(source_entity_type, []):
                 if (
                     e.status == EntitySubmissionStatus.SUCCEEDED 
-                    and e.ena_accession
+                    and e.biosample_accession
                     and e.entity_id == entity.sample_id
                 ):
-                    return e.ena_accession
- 
+                    return e.biosample_accession
+
         else:
             logger.debug(f"Retrieving most recent succesfully submitted {source_entity_type} accession as prerequisite for {entity.entity_type} {entity.entity_id}")
             for e in attempt_state.entities.get(source_entity_type, []):
