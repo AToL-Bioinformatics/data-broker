@@ -105,10 +105,16 @@ class TransformService:
         data = payload.data
         alias = self._alias("project", payload.entity_id)
         project = etree.Element("PROJECT", alias=alias, center_name=self._center_name)
+        project_title=data.get("title", "")
+        while len(data.get("title", "")) < 20:
+            data["title"] = f"{project_title} {data.get("tax_id", "")}"
         self._required_sub(project, "TITLE", data, "title", payload)
         self._required_sub(project, "DESCRIPTION", data, "description", payload)
-        seq_proj = etree.SubElement(project, "SUBMISSION_PROJECT")
-        etree.SubElement(seq_proj, "SEQUENCING_PROJECT")
+        if payload.data.get("project_type") == "root":
+            etree.SubElement(project, "UMBRELLA_PROJECT")
+        else:
+            seq_proj = etree.SubElement(project, "SUBMISSION_PROJECT")
+            etree.SubElement(seq_proj, "SEQUENCING_PROJECT")
         root = etree.Element("PROJECT_SET")
         root.append(project)
         return self._to_string(root)
