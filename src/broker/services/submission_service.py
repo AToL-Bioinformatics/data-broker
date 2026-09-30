@@ -167,7 +167,7 @@ class SubmissionService:
             )
             if result.accessions.biosample_accession is not None:
                 logger.info(
-                    "Succeeded: %s %s → %s (%s)",
+                    "Succeeded: %s %s → %s",
                     entity.entity_type,
                     entity.entity_id,
                     result.accessions.biosample_accession,
