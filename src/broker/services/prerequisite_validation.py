@@ -150,7 +150,7 @@ class PrerequisiteValidator:
                     and e.entity_id == entity.project_id
                 ):
                     return e.ena_accession
-            logger.warning(f"Valid parent {source_entity_type} accession was not found for {entity.entity_type} {entity.entity_id} - expected an accessioned {source_entity_type} with ID {e.entity_id}")
+            logger.warning(f"Valid parent {source_entity_type} accession was not found for {entity.entity_type} {entity.entity_id} - expected an accessioned {source_entity_type} with ID {entity.project_id}")
             return None
 
         elif source_entity_type == EntityType.SAMPLE:
@@ -161,7 +161,7 @@ class PrerequisiteValidator:
                     and e.entity_id == entity.sample_id
                 ):
                     return e.biosample_accession
-            logger.warning(f"Valid parent {source_entity_type} accession was not found for {entity.entity_type} {entity.entity_id} - expected an accessioned {source_entity_type} with ID {e.entity_id}")
+            logger.warning(f"Valid parent {source_entity_type} accession was not found for {entity.entity_type} {entity.entity_id} - expected an accessioned {source_entity_type} with ID {entity.sample_id}")
             return None
 
         else:
