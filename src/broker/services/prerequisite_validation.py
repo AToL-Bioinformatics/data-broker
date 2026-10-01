@@ -153,7 +153,7 @@ class PrerequisiteValidator:
             logger.warning(f"Valid parent {source_entity_type} accession was not found for {entity.entity_type} {entity.entity_id} - expected an accessioned {source_entity_type} with ID {e.entity_id}")
             return None
 
-        if source_entity_type == EntityType.SAMPLE:
+        elif source_entity_type == EntityType.SAMPLE:
             for e in attempt_state.entities.get(source_entity_type, []):
                 if (
                     e.status == EntitySubmissionStatus.SUCCEEDED 
