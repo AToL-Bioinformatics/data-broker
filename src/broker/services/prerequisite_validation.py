@@ -164,10 +164,9 @@ class PrerequisiteValidator:
             logger.warning(f"Valid parent {source_entity_type} accession was not found for {entity.entity_type} {entity.entity_id} - expected an accessioned {source_entity_type} with ID {entity.sample_id}")
             return None
 
-        else:
-            logger.debug(f"Retrieving most recent succesfully submitted {source_entity_type} accession as prerequisite for {entity.entity_type} {entity.entity_id}")
-            for e in attempt_state.entities.get(source_entity_type, []):
-                if e.status == EntitySubmissionStatus.SUCCEEDED and e.ena_accession:
-                    return e.ena_accession
+        logger.debug(f"Retrieving most recent succesfully submitted {source_entity_type} accession as prerequisite for {entity.entity_type} {entity.entity_id}")
+        for e in attempt_state.entities.get(source_entity_type, []):
+            if e.status == EntitySubmissionStatus.SUCCEEDED and e.ena_accession:
+                return e.ena_accession
 
         return None
