@@ -126,7 +126,7 @@ class PrerequisiteValidator:
         if allow_state_fallback:
             source_type = _FIELD_TO_TYPE.get(field)
             if source_type is not None:
-                accession = self._find_succeeded_accession(source_type, attempt_state)
+                accession = self._find_succeeded_accession(source_type, attempt_state, entity)
                 if accession:
                     return accession
 
@@ -134,10 +134,39 @@ class PrerequisiteValidator:
 
     @staticmethod
     def _find_succeeded_accession(
-        entity_type: EntityType, attempt_state: AttemptState
+        source_entity_type: EntityType, 
+        attempt_state: AttemptState, 
+        entity: EntitySubmissionState
     ) -> str | None:
-        """Return the ENA accession of the most recent succeeded entity of the given type."""
-        for e in attempt_state.entities.get(entity_type, []):
+        """
+        Return the ENA accession of the most recent succeeded entity of the given type.
+        In the case of experiments, check that prerequisite accessions reflect entity relationships described in Canopy.
+        """
+        if entity.entity_type == EntityType.EXPERIMENT and source_entity_type == EntityType.PROJECT:
+            for e in attempt_state.entities.get(source_entity_type, []):
+                if (
+                    e.status == EntitySubmissionStatus.SUCCEEDED 
+                    and e.ena_accession
+                    and e.entity_id == entity.project_id
+                ):
+                    return e.ena_accession
+            logger.warning(f"Valid parent {source_entity_type} accession was not found for {entity.entity_type} {entity.entity_id} - expected an accessioned {source_entity_type} with ID {entity.project_id}")
+            return None
+
+        if source_entity_type == EntityType.SAMPLE:
+            for e in attempt_state.entities.get(source_entity_type, []):
+                if (
+                    e.status == EntitySubmissionStatus.SUCCEEDED 
+                    and e.biosample_accession
+                    and e.entity_id == entity.sample_id
+                ):
+                    return e.biosample_accession
+            logger.warning(f"Valid parent {source_entity_type} accession was not found for {entity.entity_type} {entity.entity_id} - expected an accessioned {source_entity_type} with ID {entity.sample_id}")
+            return None
+
+        logger.debug(f"Retrieving most recent succesfully submitted {source_entity_type} accession as prerequisite for {entity.entity_type} {entity.entity_id}")
+        for e in attempt_state.entities.get(source_entity_type, []):
             if e.status == EntitySubmissionStatus.SUCCEEDED and e.ena_accession:
                 return e.ena_accession
+
         return None

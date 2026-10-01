@@ -165,12 +165,20 @@ class SubmissionService:
                 ena_accession=result.accessions.primary_accession,
                 biosample_accession=result.accessions.biosample_accession,
             )
-            logger.info(
-                "Succeeded: %s %s → %s",
-                entity.entity_type,
-                entity.entity_id,
-                result.accessions.primary_accession,
-            )
+            if result.accessions.biosample_accession is not None:
+                logger.info(
+                    "Succeeded: %s %s → %s",
+                    entity.entity_type,
+                    entity.entity_id,
+                    result.accessions.biosample_accession,
+                )
+            else:
+                logger.info(
+                    "Succeeded: %s %s → %s",
+                    entity.entity_type,
+                    entity.entity_id,
+                    result.accessions.primary_accession,
+                )
         else:
             error = result.error_message or "ENA submission failed (no detail)"
             entity.mark_failed(error)

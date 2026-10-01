@@ -272,6 +272,8 @@ class Orchestrator:
                 entity_id=ce.id,
                 entity_type=ce.type,
                 raw_payload=raw_payload,
+                project_id = ce.project_id,
+                sample_id = ce.sample_id,
                 # Prefer required_* fields (what this entity specifically needs).
                 # Fall back to the plain resolved field in case required_* is absent.
                 project_accession=(p.required_project_accession or p.project_accession) if p else None,
