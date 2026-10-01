@@ -150,6 +150,8 @@ class PrerequisiteValidator:
                     and e.entity_id == entity.project_id
                 ):
                     return e.ena_accession
+            logger.warning(f"Valid parent {source_entity_type} accession was not found for {entity.entity_type} {entity.entity_id} - expected an accessioned {source_entity_type} with ID {e.entity_id}")
+            return None
 
         if source_entity_type == EntityType.SAMPLE:
             for e in attempt_state.entities.get(source_entity_type, []):
@@ -159,6 +161,8 @@ class PrerequisiteValidator:
                     and e.entity_id == entity.sample_id
                 ):
                     return e.biosample_accession
+            logger.warning(f"Valid parent {source_entity_type} accession was not found for {entity.entity_type} {entity.entity_id} - expected an accessioned {source_entity_type} with ID {e.entity_id}")
+            return None
 
         else:
             logger.debug(f"Retrieving most recent succesfully submitted {source_entity_type} accession as prerequisite for {entity.entity_type} {entity.entity_id}")
@@ -166,5 +170,4 @@ class PrerequisiteValidator:
                 if e.status == EntitySubmissionStatus.SUCCEEDED and e.ena_accession:
                     return e.ena_accession
 
-        logger.warning(f"Failed to find and reconcile prerequisites for {entity.entity_type} {entity.entity_id}")
         return None
