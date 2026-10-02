@@ -275,5 +275,5 @@ class ToLIDService:
     def _fallback_sample_title(item: ToLIDWorkItem) -> str:
         scientific_name = item.scientific_name or "unknown organism"
         label = "Specimen" if item.kind == "specimen" else "Sample"
-        specimen_id = item.sample_payload.get("specimen_id") or ""
+        specimen_id = item.sample_payload.get("specimen_id", “”)
         return f"{label} {specimen_id} for {scientific_name}"
