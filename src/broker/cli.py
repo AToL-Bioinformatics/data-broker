@@ -566,7 +566,7 @@ def _build_orchestrator(submission_mode: SubmissionMode, prod: bool = False):
     state_store = StateStore(settings.state_dir)
     receipt_store = ReceiptStore(settings.receipt_dir)
 
-    transform_service = TransformService(webin_account=settings.webin_username)
+    transform_service = TransformService(atol_center_name="Australian Tree of Life Bioinformatics")
     receipt_parser = ReceiptParser()
     prereq_validator = PrerequisiteValidator()
     report_service = ReportService(canopy_client, enabled=prod)
@@ -612,7 +612,7 @@ def _build_resume_service(prod: bool = False):
     state_store = StateStore(settings.state_dir)
     receipt_store = ReceiptStore(settings.receipt_dir)
 
-    transform_service = TransformService(webin_account=settings.webin_username)
+    transform_service = TransformService(atol_center_name="Australian Tree of Life Bioinformatics")
     receipt_parser = ReceiptParser()
     prereq_validator = PrerequisiteValidator()
     report_service = ReportService(canopy_client, enabled=prod)
@@ -663,7 +663,7 @@ def _build_tolid_service(prod: bool = False):
             settings,
             base_url=settings.ena_prod_base_url if prod else settings.ena_dev_base_url,
         ),
-        transform_service=TransformService(webin_account=settings.webin_username),
+        transform_service=TransformService(atol_center_name="Australian Tree of Life Bioinformatics"),
         report_to_canopy=prod,
     )
 
