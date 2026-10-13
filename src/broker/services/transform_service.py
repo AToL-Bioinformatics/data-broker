@@ -92,9 +92,9 @@ class TransformError(BrokerError):
 class TransformService:
     """Converts Canopy entity payloads to ENA XML strings."""
 
-    def __init__(self, webin_account: str) -> None:
-        # center_name in ENA XML — typically the Webin account identifier.
-        self._center_name = webin_account
+    def __init__(self, atol_center_name: str) -> None:
+        # center_name in ENA XML — defaulting to Australian Tree of Life Bioinformatics
+        self._center_name = atol_center_name
 
     # ------------------------------------------------------------------
     # Public: per-entity transform
