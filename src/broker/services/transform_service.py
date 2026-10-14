@@ -52,7 +52,7 @@ _REQUIRED_EXPERIMENT_FIELDS: dict[str, str] = {
     "library_strategy": "missing:not provided",
     "library_source": "missing:not provided",
     "library_selection": "missing:not provided",
-    "library_layout": "PAIRED",
+    "library_layout": "SINGLE",
     "library_construction_protocol": "missing:not provided",
 }
 
@@ -163,6 +163,11 @@ class TransformService:
     ) -> str:
         """Build EXPERIMENT_SET XML, injecting resolved prerequisite accessions."""
         data = payload.data
+
+        # Reject Illumina libraries with no pairing information
+        if data.get("platform", "") == "ILLUMINA" and data.get("library_layout") == None:
+            raise TransformError(f"library_layout is required for Illumina libraries.")
+
         alias = self._alias("experiment", payload.entity_id)
         exp = etree.Element("EXPERIMENT", alias=alias, center_name=self._center_name)
         self._required_sub(exp, "TITLE", data, "title", payload)
