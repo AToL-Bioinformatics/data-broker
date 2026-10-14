@@ -338,18 +338,19 @@ def test_experiment_xml_missing_platform_raises():
         svc.to_experiment_xml(payload, "PRJEB1", "ERS1")
 
 
-def test_experiment_xml_missing_illumina_layout_raises():
-    svc = make_service()
-    payload = make_payload(
-        EntityType.EXPERIMENT, "x1",
-        {
-            "title": "T",
-            "platform": "ILLUMINA",
-            "instrument_model": "HiSeq",
-        },
-    )
-    with pytest.raises(TransformError, match="library_layout is required"):
-        svc.to_experiment_xml(payload, "PRJEB1", "ERS1")
+# REMOVED - this check is performed in _validate_entity_for_submission
+# def test_experiment_xml_missing_illumina_layout_raises():
+#     svc = make_service()
+#     payload = make_payload(
+#         EntityType.EXPERIMENT, "x1",
+#         {
+#             "title": "T",
+#             "platform": "ILLUMINA",
+#             "instrument_model": "HiSeq",
+#         },
+#     )
+#     with pytest.raises(TransformError, match="library_layout is required"):
+#         svc.to_experiment_xml(payload, "PRJEB1", "ERS1")
 
 def test_experiment_pb_defaults_to_single():
     svc = make_service()

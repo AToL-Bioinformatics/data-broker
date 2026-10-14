@@ -124,7 +124,9 @@ class SubmissionService:
         )
 
         if submission_mode == SubmissionMode.DRY_RUN:
-            logger.info("[DRY RUN] Would submit %s %s", entity.entity_type, entity.entity_id)
+            logger.info(
+                "[DRY RUN] Would submit %s %s", entity.entity_type, entity.entity_id
+            )
             entity.mark_skipped()
             self._state_store.save(attempt_state)
             return entity
@@ -232,6 +234,14 @@ class SubmissionService:
                     f"(len={len(title)}, min={_ENA_PROJECT_TITLE_MIN_LENGTH}, value={title!r})"
                 )
         """
+        if entity.entity_type == EntityType.EXPERIMENT:
+            # Reject Illumina libraries with no pairing information
+            if (
+                data.get("platform", "") == "ILLUMINA"
+                and data.get("library_layout") == None
+            ):
+                errors.append("library_layout is required for Illumina libraries.")
+
         return errors
 
     def _build_entity_xml(
