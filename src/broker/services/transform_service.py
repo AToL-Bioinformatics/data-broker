@@ -52,7 +52,7 @@ _REQUIRED_EXPERIMENT_FIELDS: dict[str, str] = {
     "library_strategy": "missing:not provided",
     "library_source": "missing:not provided",
     "library_selection": "missing:not provided",
-    "library_layout": "PAIRED",
+    "library_layout": "SINGLE",
     "library_construction_protocol": "missing:not provided",
 }
 

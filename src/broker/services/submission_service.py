@@ -110,12 +110,6 @@ class SubmissionService:
         entity.mark_submitted()
         self._state_store.save(attempt_state)
 
-        if submission_mode == SubmissionMode.DRY_RUN:
-            logger.info("[DRY RUN] Would submit %s %s", entity.entity_type, entity.entity_id)
-            entity.mark_skipped()
-            self._state_store.save(attempt_state)
-            return entity
-
         # Step 3: Build ENA XML
         entity_xml = self._build_entity_xml(entity, attempt_state)
 
@@ -128,6 +122,14 @@ class SubmissionService:
         submission_xml = self._transform.build_submission_xml(
             hold_until_date=hold_until_date
         )
+
+        if submission_mode == SubmissionMode.DRY_RUN:
+            logger.info(
+                "[DRY RUN] Would submit %s %s", entity.entity_type, entity.entity_id
+            )
+            entity.mark_skipped()
+            self._state_store.save(attempt_state)
+            return entity
 
         # Step 4: POST to ENA — never raises
         logger.info("Submitting %s %s to ENA", entity.entity_type, entity.entity_id)
@@ -232,6 +234,14 @@ class SubmissionService:
                     f"(len={len(title)}, min={_ENA_PROJECT_TITLE_MIN_LENGTH}, value={title!r})"
                 )
         """
+        if entity.entity_type == EntityType.EXPERIMENT:
+            # Reject Illumina libraries with no pairing information
+            if (
+                data.get("platform", "") == "ILLUMINA"
+                and data.get("library_layout") == None
+            ):
+                errors.append("library_layout is required for Illumina libraries.")
+
         return errors
 
     def _build_entity_xml(

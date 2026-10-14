@@ -338,6 +338,37 @@ def test_experiment_xml_missing_platform_raises():
         svc.to_experiment_xml(payload, "PRJEB1", "ERS1")
 
 
+# REMOVED - this check is performed in _validate_entity_for_submission
+# def test_experiment_xml_missing_illumina_layout_raises():
+#     svc = make_service()
+#     payload = make_payload(
+#         EntityType.EXPERIMENT, "x1",
+#         {
+#             "title": "T",
+#             "platform": "ILLUMINA",
+#             "instrument_model": "HiSeq",
+#         },
+#     )
+#     with pytest.raises(TransformError, match="library_layout is required"):
+#         svc.to_experiment_xml(payload, "PRJEB1", "ERS1")
+
+def test_experiment_pb_defaults_to_single():
+    svc = make_service()
+    payload = make_payload(
+        EntityType.EXPERIMENT, "x1",
+        {
+            "title": "T",
+            "platform": "PACBIO_SMRT",
+            "instrument_model": "Revio",
+        },
+    )
+    xml = svc.to_experiment_xml(payload, "PRJEB1", "ERS1")
+    root = parse_xml(xml)
+    lib = root.find("EXPERIMENT/DESIGN/LIBRARY_DESCRIPTOR")
+    assert lib.find("LIBRARY_LAYOUT/SINGLE") is not None  # layout defaults to SINGLE for pb
+
+
+
 def test_experiment_xml_missing_library_fields_use_defaults():
     """Missing library fields must be filled with 'missing:not provided' (layout → PAIRED)."""
     svc = make_service()
@@ -347,7 +378,8 @@ def test_experiment_xml_missing_library_fields_use_defaults():
             "title": "T",
             "platform": "ILLUMINA",
             "instrument_model": "HiSeq",
-            # all library fields intentionally absent
+            "library_layout": "PAIRED"
+            # all other library fields intentionally absent
         },
     )
     xml = svc.to_experiment_xml(payload, "PRJEB1", "ERS1")
