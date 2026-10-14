@@ -13,7 +13,7 @@ CENTER = "Webin-12345"
 
 
 def make_service() -> TransformService:
-    return TransformService(webin_account=CENTER)
+    return TransformService(atol_center_name=CENTER)
 
 
 def make_payload(entity_type: EntityType, entity_id: str, data: dict) -> CanopyEntityPayload:
