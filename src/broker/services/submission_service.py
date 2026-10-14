@@ -113,12 +113,6 @@ class SubmissionService:
         # Step 3: Build ENA XML
         entity_xml = self._build_entity_xml(entity, attempt_state)
 
-        if submission_mode == SubmissionMode.DRY_RUN:
-            logger.info("[DRY RUN] Would submit %s %s", entity.entity_type, entity.entity_id)
-            entity.mark_skipped()
-            self._state_store.save(attempt_state)
-            return entity
-
         # HOLD applies to projects and samples only
         hold_until_date = (
             attempt_state.hold_until_date
@@ -128,6 +122,12 @@ class SubmissionService:
         submission_xml = self._transform.build_submission_xml(
             hold_until_date=hold_until_date
         )
+
+        if submission_mode == SubmissionMode.DRY_RUN:
+            logger.info("[DRY RUN] Would submit %s %s", entity.entity_type, entity.entity_id)
+            entity.mark_skipped()
+            self._state_store.save(attempt_state)
+            return entity
 
         # Step 4: POST to ENA — never raises
         logger.info("Submitting %s %s to ENA", entity.entity_type, entity.entity_id)
