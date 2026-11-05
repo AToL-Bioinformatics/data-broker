@@ -241,7 +241,11 @@ class SubmissionService:
                 and data.get("library_layout") == None
             ):
                 errors.append("library_layout is required for Illumina libraries.")
-
+            # Reject experiments missing mandatory metadata fields
+            if data.get("library_strategy") is None:
+                errors.append("library_strategy is a required field")
+            if data.get("library_source") is None:
+                errors.append("library_source is a required field")
         return errors
 
     def _build_entity_xml(
