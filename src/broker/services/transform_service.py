@@ -174,7 +174,8 @@ class TransformService:
         layout_el = etree.SubElement(lib, "LIBRARY_LAYOUT")
         layout_val = self._field_or_default(data, "library_layout")
         etree.SubElement(layout_el, layout_val.upper())
-        etree.SubElement(lib, "LIBRARY_CONSTRUCTION_PROTOCOL").text = self._field_or_default(data, "library_construction_protocol")
+        if data.get("library_construction_protocol"):
+            etree.SubElement(lib, "LIBRARY_CONSTRUCTION_PROTOCOL").text = self._field_or_default(data, "library_construction_protocol")
         platform_val = self._require_field(data, "platform", payload)
         platform_el = etree.SubElement(exp, "PLATFORM")
         instrument_el = etree.SubElement(platform_el, platform_val.upper())
