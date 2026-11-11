@@ -44,16 +44,12 @@ from broker.errors import BrokerError
 #   from the Canopy payload, so that the submission is valid even when data is
 #   incomplete at the time of submission.
 # Required experiment library fields — substituted when absent from the payload.
-# library_layout is special: it becomes an XML element name (<PAIRED/> or <SINGLE/>),
-# so "missing:not provided" would be an invalid tag — default to PAIRED instead.
-# # TODO default to PAIRED is not safe
+# Illumina experiments without library_layout fail validation before XML 
+# building. Experiments without library_strategy or library_source fail 
+# validation before XML building.
 _REQUIRED_EXPERIMENT_FIELDS: dict[str, str] = {
-    "library_name": "missing:not provided",
-    "library_strategy": "missing:not provided",
-    "library_source": "missing:not provided",
-    "library_selection": "missing:not provided",
-    "library_layout": "SINGLE",
-    "library_construction_protocol": "missing:not provided",
+    "library_selection": "unspecified",
+    "library_layout": "SINGLE", 
 }
 
 _REQUIRED_SAMPLE_ATTRIBUTES: dict[str, str] = {
@@ -178,7 +174,8 @@ class TransformService:
         layout_el = etree.SubElement(lib, "LIBRARY_LAYOUT")
         layout_val = self._field_or_default(data, "library_layout")
         etree.SubElement(layout_el, layout_val.upper())
-        etree.SubElement(lib, "LIBRARY_CONSTRUCTION_PROTOCOL").text = self._field_or_default(data, "library_construction_protocol")
+        if data.get("library_construction_protocol"):
+            etree.SubElement(lib, "LIBRARY_CONSTRUCTION_PROTOCOL").text = self._field_or_default(data, "library_construction_protocol")
         platform_val = self._require_field(data, "platform", payload)
         platform_el = etree.SubElement(exp, "PLATFORM")
         instrument_el = etree.SubElement(platform_el, platform_val.upper())
