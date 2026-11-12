@@ -101,9 +101,9 @@ class TransformService:
         data = payload.data
         alias = self._alias("project", payload.entity_id)
         project = etree.Element("PROJECT", alias=alias, center_name=self._center_name)
-        project_title=data.get("title", "")
-        while len(data.get("title", "")) < 20:
-            data["title"] = f"{project_title} {data.get("tax_id", "")}"
+        # Pad once with tax_id; titles still too short are left for ENA to reject
+        if len(data.get("title", "")) < 21:
+            data["title"] = f"{data.get('title', '')} {data.get('tax_id', '')}".strip()
         self._required_sub(project, "TITLE", data, "title", payload)
         self._required_sub(project, "DESCRIPTION", data, "description", payload)
         if payload.data.get("project_type") == "root":
