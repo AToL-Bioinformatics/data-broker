@@ -78,6 +78,7 @@ _SAMPLE_ATTRIBUTE_FIELD_MAP: dict[str, str] = {
     "collection method": "collection method",
     "geographic location (country and/or sea)": "geographic location (country and/or sea)",
     "collecting institution": "collecting institution",
+    "sample derived from": "sample derived from",
 }
 
 
