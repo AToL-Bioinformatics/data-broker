@@ -90,7 +90,10 @@ class SampleModifyService:
         ena = self._ena.submit_sample(entity.id, submission_xml, sample_xml)
         if not ena.success:
             result.error = f"ENA MODIFY failed: {ena.error_message or 'no detail'}"
-            logger.warning("Sample %s: %s", entity.id, result.error)
+            # The one-line error hides the rest of ENA's receipt (all ERROR/INFO messages).
+            logger.warning(
+                "Sample %s: %s\nENA receipt:\n%s", entity.id, result.error, ena.raw_receipt
+            )
             return result
         result.ena_updated = True
 
