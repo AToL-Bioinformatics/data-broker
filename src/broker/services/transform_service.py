@@ -78,6 +78,7 @@ _SAMPLE_ATTRIBUTE_FIELD_MAP: dict[str, str] = {
     "collection method": "collection method",
     "geographic location (country and/or sea)": "geographic location (country and/or sea)",
     "collecting institution": "collecting institution",
+    "sample derived from": "sample derived from",
 }
 
 
@@ -126,26 +127,26 @@ class TransformService:
         self,
         payload: CanopyEntityPayload,
         ena_accession: str,
-        tolid: str,
+        tolid: str | None = None,
     ) -> str:
         """Build a SAMPLE_SET XML for a MODIFY submission.
 
         Identical to the original sample XML except:
         - The ``accession`` attribute is set on ``<SAMPLE>`` so ENA can locate
           the existing record.
-        - A ``tolid`` SAMPLE_ATTRIBUTE is injected before the full attribute
-          list is built (so it goes through ``_apply_required_sample_attributes``
-          alongside any other user-supplied attributes).
+        - If ``tolid`` is given, a ``tolid`` SAMPLE_ATTRIBUTE is injected before
+          the full attribute list is built (so it goes through
+          ``_apply_required_sample_attributes`` alongside any other attributes).
+
+        MODIFY replaces the whole ENA record, so ``payload`` must be complete.
         """
-        # Inject tolid into a copy of sample_attributes before building
-        existing_attrs = list(payload.data.get("sample_attributes", []))
-        attrs_with_tolid = [{"tag": "tolid", "value": tolid}] + existing_attrs
+        if tolid:
+            existing_attrs = list(payload.data.get("sample_attributes", []))
+            attrs_with_tolid = [{"tag": "tolid", "value": tolid}] + existing_attrs
+            patched_data = {**payload.data, "sample_attributes": attrs_with_tolid}
+            payload = payload.model_copy(update={"data": patched_data})
 
-        # Build a patched payload dict so the shared builder picks up the tolid
-        patched_data = {**payload.data, "sample_attributes": attrs_with_tolid}
-        patched_payload = payload.model_copy(update={"data": patched_data})
-
-        sample = self._build_sample_element(patched_payload)
+        sample = self._build_sample_element(payload)
         sample.set("accession", ena_accession)
         root = etree.Element("SAMPLE_SET")
         root.append(sample)

@@ -6,6 +6,7 @@ Commands:
   broker submit batch  --samples id1,id2 ...        submit specific entities by ID
                        --from-file batch.json
   broker resume        --attempt-id <id>            resume an interrupted attempt
+  broker sample modify [--tax-id <id>] [--dry-run]  backfill attributes onto ENA samples
 
 The CLI's responsibility is:
   1. Parse and validate arguments
@@ -43,6 +44,10 @@ submit_app = typer.Typer(help="Submission commands.", no_args_is_help=True)
 tolid_app = typer.Typer(help="Tree of Life ID (ToLID) commands.", no_args_is_help=True)
 app.add_typer(submit_app, name="submit")
 app.add_typer(tolid_app, name="tolid")
+sample_app = typer.Typer(
+    help="Commands for samples already registered at ENA.", no_args_is_help=True
+)
+app.add_typer(sample_app, name="sample")
 
 console = Console()
 err_console = Console(stderr=True, style="bold red")
@@ -537,6 +542,60 @@ def tolid_poll(
 
 
 # ---------------------------------------------------------------------------
+# broker sample modify
+# ---------------------------------------------------------------------------
+
+
+@sample_app.command("modify")
+def sample_modify(
+    tax_id: Annotated[
+        str | None,
+        typer.Option("--tax-id", help="Only samples of this taxon"),
+    ] = None,
+    limit: Annotated[
+        int | None,
+        typer.Option("--limit", help="Maximum number of samples to process"),
+    ] = None,
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", help="Print the MODIFY XML; send nothing to ENA or Canopy."),
+    ] = False,
+    report_to_canopy: Annotated[
+        bool | None,
+        typer.Option(
+            "--report-to-canopy/--no-report-to-canopy",
+            help="Record successful MODIFYs in Canopy (default: only with --prod).",
+        ),
+    ] = None,
+    prod: Annotated[
+        bool,
+        typer.Option(
+            "--prod",
+            help="Use the production ENA server. Default is the dev/test server.",
+        ),
+    ] = False,
+) -> None:
+    """MODIFY accepted ENA samples that Canopy says are missing attributes.
+
+    Currently backfills "sample derived from" onto derived samples registered
+    before their parent's BioSample accession was known.
+    """
+    from broker.errors import BrokerError
+
+    report = prod if report_to_canopy is None else report_to_canopy
+    try:
+        svc = _build_sample_modify_service(prod=prod, report_to_canopy=report)
+        results = svc.process_pending(tax_id=tax_id, limit=limit, dry_run=dry_run)
+    except BrokerError as exc:
+        err_console.print(f"[ERROR] {exc}")
+        raise typer.Exit(code=1)
+
+    _render_sample_modify_results(results, dry_run=dry_run)
+    if any(r.error for r in results):
+        raise typer.Exit(code=1)
+
+
+# ---------------------------------------------------------------------------
 # Wiring — manual dependency injection
 # ---------------------------------------------------------------------------
 
@@ -668,6 +727,25 @@ def _build_tolid_service(prod: bool = False):
     )
 
 
+def _build_sample_modify_service(prod: bool = False, report_to_canopy: bool = False):
+    from broker.clients.canopy import CanopyClient
+    from broker.clients.ena import ENAClient
+    from broker.config import get_settings
+    from broker.services.sample_modify_service import SampleModifyService
+    from broker.services.transform_service import TransformService
+
+    settings = get_settings()
+    return SampleModifyService(
+        canopy_client=CanopyClient(settings),
+        ena_client=ENAClient(
+            settings,
+            base_url=settings.ena_prod_base_url if prod else settings.ena_dev_base_url,
+        ),
+        transform_service=TransformService(webin_account=settings.webin_username),
+        report_to_canopy=report_to_canopy,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Output rendering
 # ---------------------------------------------------------------------------
@@ -768,6 +846,36 @@ def _render_tolid_results(results, scope: str, update_ena: bool) -> None:
     console.print(table)
     if not results:
         console.print("No ToLID rows were returned by Canopy for this command.")
+
+
+def _render_sample_modify_results(results, dry_run: bool) -> None:
+    """Render sample MODIFY outcomes; on dry runs, print each sample's XML."""
+    if dry_run:
+        for r in results:
+            console.rule(f"{r.sample_id} ({r.accession})")
+            console.print(r.sample_xml or f"[red]{r.error}[/red]", markup=r.sample_xml is None)
+
+    table = Table(title="Sample MODIFY — dry run" if dry_run else "Sample MODIFY")
+    table.add_column("Sample ID", style="cyan")
+    table.add_column("Accession", style="green")
+    table.add_column("Adds")
+    if not dry_run:
+        table.add_column("ENA")
+        table.add_column("Canopy")
+    table.add_column("Notes", style="dim")
+
+    yes_no = lambda ok: "[green]yes[/green]" if ok else "[red]no[/red]"  # noqa: E731
+    for r in results:
+        adds = ", ".join(f"{k}={v}" for k, v in r.updates.items())
+        row = [r.sample_id, r.accession, adds]
+        if not dry_run:
+            row += [yes_no(r.ena_updated), yes_no(r.reported)]
+        row.append(r.error or "")
+        table.add_row(*row)
+
+    console.print(table)
+    if not results:
+        console.print("Canopy reported no samples needing a MODIFY.")
 
 
 # ---------------------------------------------------------------------------

@@ -524,6 +524,41 @@ def test_report_tolid(httpx_mock):
     assert body["request_id"] == "10306"
 
 
+def test_list_sample_modify_pending(httpx_mock):
+    add_login_mock(httpx_mock)
+    httpx_mock.add_response(
+        method="GET",
+        url="http://canopy.test/broker/samples/modify-pending?taxon_id=9606&limit=5",
+        json=[
+            {
+                "accession": "ERS111",
+                "biosample_accession": "SAMEA111",
+                "entity": {
+                    "type": "sample",
+                    "id": "s1",
+                    "taxon_id": "9606",
+                    "payload": {"sample derived from": "SAMEA999"},
+                },
+            }
+        ],
+    )
+    client = CanopyClient(make_settings())
+    [item] = client.list_sample_modify_pending(tax_id="9606", limit=5)
+    assert item.accession == "ERS111"
+    assert item.entity.payload["sample derived from"] == "SAMEA999"
+
+
+def test_report_sample_modified(httpx_mock):
+    add_login_mock(httpx_mock)
+    httpx_mock.add_response(
+        method="POST", url="http://canopy.test/broker/samples/s1/modified", status_code=204
+    )
+    client = CanopyClient(make_settings())
+    client.report_sample_modified("s1", {"sample derived from": "SAMEA999"})
+    req = [r for r in httpx_mock.get_requests() if "samples/s1/modified" in str(r.url)][0]
+    assert json.loads(req.content) == {"payload_updates": {"sample derived from": "SAMEA999"}}
+
+
 # ---------------------------------------------------------------------------
 # Finalise claim
 # ---------------------------------------------------------------------------
