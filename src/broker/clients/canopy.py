@@ -43,6 +43,7 @@ from broker.errors import CanopyError
 from broker.models.canopy import (
     ClaimResponse,
     ReportBatchPayload,
+    SampleModifyItem,
     ToLIDListResponse,
     ToLIDReportPayload,
     ToLIDWorkItem,
@@ -228,6 +229,23 @@ class CanopyClient:
 
     def report_tolid(self, sample_id: str, payload: ToLIDReportPayload) -> None:
         self._post(f"/broker/tolids/{sample_id}/report", json=payload.model_dump(mode="json"))
+
+    def list_sample_modify_pending(
+        self, tax_id: str | None = None, limit: int | None = None
+    ) -> list[SampleModifyItem]:
+        params: dict[str, Any] = {}
+        if tax_id:
+            params["taxon_id"] = tax_id
+        if limit:
+            params["limit"] = limit
+        resp = self._get("/broker/samples/modify-pending", params=params)
+        return [SampleModifyItem.model_validate(item) for item in resp.json()]
+
+    def report_sample_modified(self, sample_id: str, payload_updates: dict[str, Any]) -> None:
+        self._post(
+            f"/broker/samples/{sample_id}/modified",
+            json={"payload_updates": payload_updates},
+        )
 
     # ------------------------------------------------------------------
     # Auth: login and token refresh

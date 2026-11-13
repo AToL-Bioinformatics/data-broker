@@ -120,6 +120,18 @@ class CanopyEntityPayload(BaseModel):
     experiment_accession: str | None = None
 
 
+class SampleModifyItem(BaseModel):
+    """One row from GET /broker/samples/modify-pending.
+
+    ``entity.payload`` is the full sample payload (MODIFY replaces the whole
+    ENA record); ``accession`` is the existing ENA sample accession (ERS*).
+    """
+
+    accession: str
+    biosample_accession: str | None = None
+    entity: CanopyEntity
+
+
 # ---------------------------------------------------------------------------
 # Validation
 # ---------------------------------------------------------------------------
